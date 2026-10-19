@@ -150,14 +150,40 @@ function doPass(p, t, forceLob) {
 // ===== ユーザーのパス（イーフト式：パス＝グラウンダー、フライパス＝浮き球。押す長さで強さ） =====
 function passPower() {
   const ch = Input.charge; if (!ch) return 0;
-  return clamp((performance.now() - ch.t0) / 900, 0, 1);
+  return clamp((performance.now() - ch.t0) / 450, 0, 1);
+}
+// スローインで投げようとしているか
+const isThrowing = p => !!(p && p.mustPass && G.ball.owner === p && G.restart && G.restart.type === 'throw');
+const THROW_Z = 2.05;
+// 投げる球の滞空時間と上向きの速さ（頭の上から投げて、目標地点に落ちる）
+function throwParams(d, high) {
+  const T = high ? 0.85 + d / 24 : 0.45 + d / 34;
+  return { T, vz: (4.9 * T * T - THROW_Z) / T };
+}
+function throwBall(p, dx, dy, d, high) {
+  const { T, vz } = throwParams(d, high);
+  p.fx = dx; p.fy = dy;
+  kick(p, dx * d / T, dy * d / T, vz);
+  const b = G.ball; b.x = p.x + dx * 0.3; b.y = p.y + dy * 0.3; b.z = THROW_Z;
+  p.kickAnim = 0; p.throwAnim = 0.35;
+  // 低い位置を通るところにいる相手だけが触れられる
+  const blockers = [];
+  for (const q of G.teams[1 - p.team].players) {
+    for (let i = 0; i <= 20; i++) {
+      const u = i / 20, t = u * T, z = THROW_Z + vz * t - 4.9 * t * t;
+      if (z > 2.3) continue;
+      if (Math.hypot(q.x - (b.x + dx * d * u), q.y - (b.y + dy * d * u)) < 1.6) { blockers.push(q); break; }
+    }
+  }
+  return blockers;
 }
 // スティックの方向に飛ぶ軌道を決める（表示と実際のキックで同じ計算を使う）
 function planUserPass(p, fly, power) {
   let nx = Input.jx, ny = Input.jy, l = Math.hypot(nx, ny);
   if (l < 0.3) { nx = p.fx; ny = p.fy; l = Math.hypot(nx, ny) || 1; }
   nx /= l; ny /= l;
-  const want = fly ? 15 + power * 35 : 7 + power * 30;
+  const thr = isThrowing(p);
+  const want = thr ? (fly ? 12 + power * 14 : 5 + power * 12) : fly ? 15 + power * 35 : 7 + power * 30;
   let best = null, bs = 1e9;
   for (const t of teamOf(p).players) {
     if (t === p || t.state === 'down') continue;
@@ -181,22 +207,28 @@ function planUserPass(p, fly, power) {
   let tmax = 60;
   if (dx > 1e-3) tmax = Math.min(tmax, (L - 0.6 - p.x) / dx); else if (dx < -1e-3) tmax = Math.min(tmax, (-L + 0.6 - p.x) / dx);
   if (dy > 1e-3) tmax = Math.min(tmax, (W - 0.6 - p.y) / dy); else if (dy < -1e-3) tmax = Math.min(tmax, (-W + 0.6 - p.y) / dy);
-  d = clamp(Math.min(d, tmax - (fly ? 5 : 2)), 3, 55);
+  d = clamp(Math.min(d, tmax - (fly || thr ? 5 : 2)), 3, thr ? 26 : 55);
   const ex = p.x + dx * d, ey = p.y + dy * d;
   if (!recv) {
     let bd = 1e9;
     for (const t of teamOf(p).players) { if (t === p || t.gk) continue; const q = Math.hypot(t.x - ex, t.y - ey); if (q < bd) { bd = q; recv = t; } }
   }
-  const T = fly ? 0.8 + d / 26 : 0;
-  return { dx, dy, d, ex, ey, recv, fly, T, room: Math.max(0.5, tmax - d) };
+  const tp = thr ? throwParams(d, fly) : null;
+  const T = thr ? tp.T : fly ? 0.8 + d / 26 : 0;
+  return { dx, dy, d, ex, ey, recv, fly, T, thr, vz: thr ? tp.vz : 4.9 * T, z0: thr ? THROW_Z : 0, room: Math.max(0.5, tmax - d) };
 }
 function doUserPass(p, fly, power) {
   const pl = planUserPass(p, fly, power);
   p.fx = pl.dx; p.fy = pl.dy;
   const sx = p.x + pl.dx * 0.55, sy = p.y + pl.dy * 0.55;
   const opp = G.teams[1 - p.team].players;
-  const blockers = [];
-  if (fly) {
+  let blockers = [];
+  if (pl.thr) {
+    blockers = throwBall(p, pl.dx, pl.dy, pl.d, fly);
+    G.pass = { team: p.team, receiver: pl.recv, tx: pl.ex, ty: pl.ey, dx: pl.dx, dy: pl.dy, until: G.t + 6, user: true, fly: true, blockers };
+    if (pl.recv && p.team === 0 && !G.auto) G.ctrl = pl.recv;
+    return;
+  } else if (fly) {
     const T = pl.T, vh = pl.d / T;
     kick(p, pl.dx * vh, pl.dy * vh, 4.9 * T);
     // 低い位置（離れ際と落下点）でだけ相手が触れられる
@@ -282,6 +314,7 @@ function comboPartner(p) {
 // 今この選手が使える技の一覧（メニュー用）
 function skillOptions(p) {
   const T = teamOf(p), b = G.ball, res = [];
+  if (b.owner === p && p.mustPass) return res;
   const hasBall = b.owner === p;
   for (const k of p.d.skills) {
     const sk = SKILLS[k];
@@ -304,6 +337,7 @@ function skillOptions(p) {
 function useSkill(p, sk) {
   const T = teamOf(p), b = G.ball;
   if (T.gauge < sk.cost || G.freeze) return false;
+  if (b.owner === p && p.mustPass) return false;
   if (sk.type === 'shoot') {
     if (b.owner !== p) return false;
     const partner = sk.combo ? comboPartner(p) : null;
@@ -494,7 +528,7 @@ function moveTo(p, tx, ty, urg) {
 function movePlayers(dt) {
   const b = G.ball;
   for (const p of G.players) {
-    p.kickCd -= dt; p.kickAnim -= dt; p.waitT -= dt;
+    p.kickCd -= dt; p.kickAnim -= dt; p.waitT -= dt; if (p.throwAnim > 0) p.throwAnim -= dt;
     if (p.gkHold > 0) p.gkHold -= dt;
     if (p.z > 0 || p.vz > 0) { p.vz -= 14 * dt; p.z += p.vz * dt; if (p.z < 0) { p.z = 0; p.vz = 0; } }
     if (p.state !== 'run') p.st -= dt;
@@ -579,6 +613,10 @@ function updateBall(dt) {
   const b = G.ball;
   if (b.owner) {
     const o = b.owner;
+    if (isThrowing(o)) {
+      b.x = o.x + o.fx * 0.1; b.y = o.y + o.fy * 0.1; b.z = THROW_Z; b.vx = b.vy = b.vz = 0;
+      return;
+    }
     const off = o.gk && o.gkHold > 0 ? 0.3 : 0.62 + 0.1 * Math.sin(o.run * 2);
     const tx = o.x + o.fx * off, ty = o.y + o.fy * off;
     const a = Math.min(1, dt * 18);
@@ -843,7 +881,12 @@ function aiCarrier(p, dt) {
       doPass(p, t, true);
     } else {
       const o = bestPassOption(p); t = o ? o.t : T.players[5];
-      doPass(p, t, G.restart && G.restart.type === 'goalkick');
+      if (isThrowing(p)) {
+        let dx = t.x - p.x, dy = t.y - p.y, d = Math.hypot(dx, dy) || 1;
+        dx /= d; dy /= d; d = Math.min(d, 24);
+        throwBall(p, dx, dy, d, d > 14);
+        G.pass = { team: p.team, receiver: t, tx: p.x + dx * d, ty: p.y + dy * d, until: G.t + 4 };
+      } else doPass(p, t, G.restart && G.restart.type === 'goalkick');
     }
     return;
   }

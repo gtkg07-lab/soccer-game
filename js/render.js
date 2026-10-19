@@ -249,9 +249,9 @@ function drawFigure(c, x, y, s, look, pose) {
     c.strokeStyle = col(look.skin); c.lineWidth = 0.085 * s;
     c.beginPath(); c.moveTo(hx * 0.5, (shY + hy) / 2); c.lineTo(hx, hy); c.stroke();
   };
-  const armsUp = pose.arms === 'up';
+  const armsUp = pose.arms === 'up', armsFwd = pose.arms === 'fwd';
   // 奥の腕・脚
-  if (armsUp) arm(-0.3 * s, -2.0 * s); else arm(-sw * 0.9 * s, -0.98 * s);
+  if (armsUp) arm(-0.3 * s, -2.0 * s); else if (armsFwd) arm(0.5 * s, -1.6 * s); else arm(-sw * 0.9 * s, -0.98 * s);
   leg(-0.04 * s, -sw * s, 0, false);
   // 胴体
   c.fillStyle = col(look.shorts);
@@ -273,7 +273,7 @@ function drawFigure(c, x, y, s, look, pose) {
     const k = Math.sin(Math.min(1, pose.kick) * Math.PI);
     leg(0.04 * s, (0.15 + 0.4 * k) * s, -0.45 * k * s, true);
   } else leg(0.04 * s, sw * s, 0, true);
-  if (armsUp) arm(0.3 * s, -2.0 * s); else arm(sw * 0.9 * s, -0.98 * s);
+  if (armsUp) arm(0.3 * s, -2.0 * s); else if (armsFwd) arm(0.55 * s, -1.55 * s); else arm(sw * 0.9 * s, -0.98 * s);
   // 頭
   c.fillStyle = col(look.skin);
   c.beginPath(); c.arc(0.02 * s, -1.62 * s, 0.135 * s, 0, 7); c.fill();
@@ -295,6 +295,8 @@ function playerPose(p) {
   else if (p.state === 'dive') { pose.rot = (p.diveDir || 1) * 1.25; pose.moving = false; pose.arms = 'up'; pose.flip = 1; }
   else if (p.state === 'cele') { pose.arms = 'up'; }
   if (p.gk && G.ball.owner === p) pose.arms = 'up';
+  if (isThrowing(p)) { pose.arms = 'up'; pose.kick = 0; }
+  if (p.throwAnim > 0) { pose.arms = 'fwd'; pose.kick = 0; }
   return pose;
 }
 
@@ -642,14 +644,14 @@ function drawPassGuide(c) {
   const a = ch ? 0.95 : 0.5;
   c.save();
   c.lineCap = 'round';
-  if (fly) {
+  if (fly || pl.thr) {
     // 放物線と地面の影
     c.setLineDash([2, 6]); c.strokeStyle = `rgba(255,255,255,${a * 0.5})`; c.lineWidth = 2;
     polyW(c, [[sx, sy, 0], [pl.ex, pl.ey, 0]]); c.stroke();
     c.setLineDash([]);
     c.beginPath(); let first = true;
     for (let i = 0; i <= 24; i++) {
-      const u = i / 24, t = u * pl.T, z = 4.9 * pl.T * t - 4.9 * t * t;
+      const u = i / 24, t = u * pl.T, z = pl.z0 + pl.vz * t - 4.9 * t * t;
       const q = P(sx + pl.dx * pl.d * u, sy + pl.dy * pl.d * u, z); if (!q) continue;
       if (first) { c.moveTo(q.x, q.y); first = false; } else c.lineTo(q.x, q.y);
     }
@@ -668,13 +670,23 @@ function drawPassGuide(c) {
     const r = P(pl.recv.x, pl.recv.y, 0);
     if (r) { c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 2; c.beginPath(); c.ellipse(r.x, r.y, 0.7 * r.k, 0.24 * r.k, 0, 0, 7); c.stroke(); }
   }
-  // 強さゲージ（押している間）
+  // 強さゲージ（押している間・頭の上に大きく）
   if (ch) {
-    const f = P(p.x, p.y, 0);
+    const f = P(p.x, p.y, p.z + 2.4);
     if (f) {
-      const w = 54, h = 7, x = f.x - w / 2, y = f.y + 22;
-      c.fillStyle = 'rgba(0,0,0,0.7)'; c.fillRect(x - 1, y - 1, w + 2, h + 2);
-      c.fillStyle = fly ? '#78dcff' : '#ffe14d'; c.fillRect(x, y, w * Math.max(0.04, power), h);
+      const w = 96, h = 14, x = f.x - w / 2, y = f.y - 46;
+      const col = fly ? '#4fd8ff' : '#ffe14d';
+      c.fillStyle = 'rgba(0,0,0,0.85)'; rrect(c, x - 3, y - 3, w + 6, h + 6, 6); c.fill();
+      c.strokeStyle = '#fff'; c.lineWidth = 2; rrect(c, x - 3, y - 3, w + 6, h + 6, 6); c.stroke();
+      const g = c.createLinearGradient(x, 0, x + w, 0);
+      g.addColorStop(0, col); g.addColorStop(1, power >= 1 ? '#ff5a1f' : col);
+      c.fillStyle = g; rrect(c, x, y, Math.max(4, w * power), h, 4); c.fill();
+      c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1;
+      for (let i = 1; i < 4; i++) { c.beginPath(); c.moveTo(x + w * i / 4, y); c.lineTo(x + w * i / 4, y + h); c.stroke(); }
+      c.font = `900 12px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'bottom';
+      c.lineWidth = 3; c.strokeStyle = '#000';
+      const label = pl.thr ? 'スローイン' : fly ? 'フライパス' : 'パス';
+      c.strokeText(label, f.x, y - 5); c.fillStyle = col; c.fillText(label, f.x, y - 5);
     }
   }
   c.restore();

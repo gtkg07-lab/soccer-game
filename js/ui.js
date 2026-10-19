@@ -167,8 +167,10 @@ const UI = {
     const p = G.ctrl; if (!p || G.auto) return;
     const atk = G.ball.owner === p;
     const set = (id, txt) => { const s = $(id).firstElementChild; if (s.textContent !== txt) s.textContent = txt; };
-    set('bPass', atk ? 'パス' : '切替');
-    set('bShoot', atk ? (p.gk || p.mustPass ? 'ロング' : 'シュート') : 'スライ\nディング');
+    const thr = isThrowing(p);
+    set('bPass', atk ? (thr ? 'スロー' : 'パス') : '切替');
+    set('bFly', thr ? '高く\nスロー' : 'フライ\nパス');
+    set('bShoot', atk ? (thr ? '高く\nスロー' : p.gk || p.mustPass ? 'ロング' : 'シュート') : 'スライ\nディング');
     $('bFly').classList.toggle('dim', !atk);
     const ready = G.phase === 'play' && skillOptions(p).some(o => o.ok);
     $('bSkill').classList.toggle('ready', ready);
@@ -342,7 +344,7 @@ addEventListener('DOMContentLoaded', () => {
       if (until === 'special' && G.ball.special && G.ball.special.trav > +(q.get('tr') || 8) && !G.freeze) break;
     }
     if (q.has('throw')) { G.phase = 'play'; setRestart('throw', 0, 8, (q.get('throw') === 'far' ? 1 : -1) * (W - 0.5)); for (let i = 0; i < 80; i++) update(1 / 60); }
-    if (q.has('guide')) { G.phase = 'play'; Input.jx = 0.9; Input.jy = 0.3; Input.charge = { fly: q.get('guide') === 'fly', t0: performance.now() - 450 }; for (let i = 0; i < 2; i++) update(1 / 60); }
+    if (q.has('guide')) { G.phase = 'play'; Input.jx = 0.9; Input.jy = 0.3; Input.charge = { fly: q.get('guide') === 'fly', t0: performance.now() - 250 }; for (let i = 0; i < 2; i++) update(1 / 60); }
     if (q.has('menu')) { G.phase = 'play'; UI.openSkillMenu(G.ctrl); }
     if (q.has('stop')) G.paused = true;
   } else {
