@@ -341,6 +341,7 @@ addEventListener('DOMContentLoaded', () => {
       update(1 / 60);
       if (until && G.freeze && G.freeze.type === until && G.freeze.t > +(q.get('ft') || 0.5)) break;
       if (until === 'goal' && G.phase === 'goal' && G.phaseT > 0.8) break;
+      if (until === 'dash' && G.players.some(p => p.state === 'dash' && !p.dashTarget && p.dashT > +(q.get('dt') || 0.4))) break;
       if (until === 'special' && G.ball.special && G.ball.special.trav > +(q.get('tr') || 8) && !G.freeze) break;
     }
     if (q.has('throw')) { G.phase = 'play'; setRestart('throw', 0, 8, (q.get('throw') === 'far' ? 1 : -1) * (W - 0.5)); for (let i = 0; i < 80; i++) update(1 / 60); }

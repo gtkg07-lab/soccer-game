@@ -268,8 +268,8 @@ function receiveMove(p) {
   const db = Math.hypot(b.x - p.x, b.y - p.y);
   let passed = false;
   if (ps.dx != null) passed = (b.x - ps.tx) * ps.dx + (b.y - ps.ty) * ps.dy > -0.5;
-  if (db < 6 || passed) moveTo(p, b.x + b.vx * 0.12, b.y + b.vy * 0.12, 1.3);
-  else moveTo(p, ps.tx, ps.ty, 1.3);
+  if (db < 6 || passed) moveTo(p, b.x + b.vx * 0.12, b.y + b.vy * 0.12, 1.3, true);
+  else moveTo(p, ps.tx, ps.ty, 1.3, Math.hypot(ps.tx - p.x, ps.ty - p.y) > 1.5);
 }
 
 // ===== 通常シュート =====
@@ -494,7 +494,8 @@ function startDash(p, sk) {
   if (userControls(p) && Math.hypot(Input.jx, Input.jy) > 0.3) { dx = Input.jx; dy = Input.jy; }
   else { const gx = teamOf(p).side * L; dx = gx - p.x; dy = -p.y * 0.3; }
   const l = Math.hypot(dx, dy) || 1;
-  p.state = 'dash'; p.st = 0.55; p.dashDx = dx / l; p.dashDy = dy / l; p.dashSk = sk; p.dashTarget = null; p.dashHit = [];
+  p.state = 'dash'; p.st = 0.85; p.dashDx = dx / l; p.dashDy = dy / l; p.dashSk = sk; p.dashTarget = null; p.dashHit = [];
+  p.dashT = 0; p.zigSign = Math.random() < 0.5 ? 1 : -1; p.lastLat = 0;
   FX.burst(p.x, p.y, 1, sk.fx, 30);
   Sfx.whoosh();
 }
@@ -520,10 +521,12 @@ function maxSpd(p, sprint) {
   if (G.ball.owner === p) v *= 0.9;
   return v;
 }
-function moveTo(p, tx, ty, urg) {
+// noBrake：ボールを追うときは目的地の手前で減速しない
+function moveTo(p, tx, ty, urg, noBrake) {
   const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy);
-  if (d < 0.3) { p.dvx = 0; p.dvy = 0; return; }
-  const sp = Math.min(maxSpd(p, urg > 1.05) * Math.min(1, urg), d * 2.4);
+  if (d < (noBrake ? 0.05 : 0.3)) { p.dvx = 0; p.dvy = 0; return; }
+  const top = maxSpd(p, urg > 1.05) * Math.min(1, urg);
+  const sp = noBrake ? Math.min(top, Math.max(d * 8, 2)) : Math.min(top, d * 2.4);
   p.dvx = dx / d * sp; p.dvy = dy / d * sp;
 }
 function movePlayers(dt) {
@@ -573,7 +576,25 @@ function movePlayers(dt) {
             p.state = 'run'; p.dashTarget = null;
           }
         } else {
-          p.vx = p.dashDx * 19; p.vy = p.dashDy * 19; p.fx = p.dashDx; p.fy = p.dashDy;
+          // 技ごとにジグザグの動きを変える（風＝鋭い切り返し、炎＝大きなS字、雷＝瞬間移動のような小刻みステップ）
+          p.dashT += dt;
+          const t = p.dashT, kind = p.dashSk.fx;
+          let fwd, lat;
+          if (kind === 'fire') { fwd = 16; lat = Math.cos(t * Math.PI * 2 * 1.3) * 18; }
+          else if (kind === 'thunder') { fwd = 13; lat = (Math.floor((t + 0.065) / 0.13) % 2 ? -1 : 1) * 21; }
+          else { fwd = 15; lat = (Math.cos(t * Math.PI * 2 * 2.1) >= 0 ? 1 : -1) * 13; }
+          lat *= p.zigSign;
+          let vx = p.dashDx * fwd - p.dashDy * lat, vy = p.dashDy * fwd + p.dashDx * lat;
+          if (Math.abs(p.y) > W - 2.5 && vy * p.y > 0) vy = -vy * 0.5;
+          if (Math.abs(p.x) > L - 2.5 && vx * p.x > 0) vx = -vx * 0.5;
+          p.vx = vx; p.vy = vy;
+          const vl = Math.hypot(vx, vy) || 1; p.fx = vx / vl; p.fy = vy / vl;
+          const sg = Math.sign(lat);
+          if (p.lastLat && sg !== p.lastLat) {
+            FX.burst(p.x, p.y, 0.8, kind, 7);
+            if (kind === 'thunder') FX.bolt(p.x, p.y, 0);
+          }
+          p.lastLat = sg;
           for (const q of G.teams[1 - p.team].players) {
             if (q.gk || p.dashHit.includes(q) || dist(p, q) > 3.4) continue;
             p.dashHit.push(q); q.state = 'down'; q.st = 1.6;
@@ -964,8 +985,15 @@ function aiOutfield(p, dt) {
       chaser = first !== c && first && c && T.near[0].d < dist(c, b) - 3 ? first : null;
     }
     if (p === chaser) {
+      const ps = G.pass;
+      if (ps && ps.user && ps.team !== p.team && !ps.blockers.includes(p) && ps.receiver) {
+        // 軌道上にいない相手はボールに触れないので、受け手に詰めにいく
+        const r = ps.receiver;
+        moveTo(p, r.x + r.vx * 0.3 - teamOf(p).side * 1.2, r.y + r.vy * 0.3, 1.25, true);
+        return;
+      }
       const t = Math.min(1.2, dist(p, b) / 8);
-      moveTo(p, b.x + b.vx * t, b.y + b.vy * t, 1.3);
+      moveTo(p, b.x + b.vx * t, b.y + b.vy * t, 1.3, true);
       return;
     }
   }
