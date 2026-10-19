@@ -1,0 +1,10 @@
+{
+  "name": "スーパースキル・イレブン",
+  "short_name": "超次元サッカー",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070b1f",
+  "theme_color": "#070b1f",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

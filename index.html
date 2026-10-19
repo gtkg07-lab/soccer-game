@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#070b1f">
+<title>スーパースキル・イレブン</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="safe"></div>
+<canvas id="cv"></canvas>
+
+<div id="hud" class="hidden">
+  <button id="btnAuto" class="topbtn">AUTO <b>OFF</b></button>
+  <button id="btnPause" class="topbtn" aria-label="一時停止">Ⅱ</button>
+</div>
+
+<div id="pad" class="hidden">
+  <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+  <div id="btns">
+    <button class="gbtn" id="bSkill" data-act="skill"><span>必殺</span></button>
+    <button class="gbtn" id="bShoot" data-act="shoot"><span>シュート</span></button>
+    <button class="gbtn" id="bPass" data-act="pass"><span>パス</span></button>
+    <button class="gbtn" id="bDash" data-act="dash"><span>ダッシュ</span></button>
+  </div>
+</div>
+<div id="autoBadge" class="hidden">AUTO 試合中 ・ 右上の AUTO で操作に戻る</div>
+<div id="toast" class="hidden"></div>
+
+<div id="skillMenu" class="hidden">
+  <div class="smTitle"></div>
+  <div class="cards"></div>
+</div>
+
+<div id="title" class="screen hidden">
+  <div class="tbox">
+    <div class="logo"><span class="l1">超次元サッカー</span><span class="l2">スーパースキル・イレブン</span></div>
+    <div class="vs"><span class="t0">疾風イレブン</span> VS <span class="t1">ダーク・オメガ</span></div>
+    <div class="opt"><span>試合時間</span>
+      <div class="seg" id="optTime">
+        <button data-v="120">前後半 各2分</button><button data-v="180" class="sel">各3分</button><button data-v="300">各5分</button>
+      </div>
+    </div>
+    <div class="opt"><span>CPUの強さ</span>
+      <div class="seg" id="optDiff">
+        <button data-v="0">かんたん</button><button data-v="1" class="sel">ふつう</button><button data-v="2">むずかしい</button>
+      </div>
+    </div>
+    <div class="row">
+      <button id="btnStart" class="big">キックオフ！</button>
+      <button id="btnHow" class="sub">遊び方</button>
+    </div>
+  </div>
+</div>
+
+<div id="howto" class="screen hidden">
+  <div class="tbox how">
+    <h2>遊び方</h2>
+    <div class="cols">
+      <div>
+        <h3>操作</h3>
+        <table>
+          <tr><th>左側をなぞる</th><td>選手を動かす</td></tr>
+          <tr><th>パス</th><td>スティックの方向の味方へパス（守備中は選手切替）</td></tr>
+          <tr><th>シュート</th><td>シュート。スティック上下でゴールの奥・手前を狙う（守備中はスライディング）</td></tr>
+          <tr><th>ダッシュ</th><td>押している間ダッシュ</td></tr>
+          <tr><th>必殺</th><td>スローになって技を選べる。ゲージを使う</td></tr>
+          <tr><th>AUTO</th><td>右上のボタンで、試合をまるごとおまかせ</td></tr>
+        </table>
+        <p class="small">PC：WASD/矢印で移動、J パス、K シュート、L 必殺、Shift ダッシュ、P AUTO、1〜4 で技を選択</p>
+      </div>
+      <div>
+        <h3>必殺技</h3>
+        <p>パスをつなぐ・ボールを奪う・セーブで<b>必殺ゲージ</b>がたまる。</p>
+        <p>必殺シュートは<b>キーパーとぶつかり合い</b>。威力が上なら突破してゴール！ 相手のシュートが来たら、キーパー技を選んで止めよう。</p>
+        <p>FWの「紅 焔」と「朱雀 光」が近くにいると、<b>連携技ツインフェニックス</b>が使える。</p>
+        <h3>属性の相性</h3>
+        <p class="elem"><b class="fire">炎</b> → <b class="wind">風</b> → <b class="thunder">雷</b> → <b class="earth">大地</b> → <b class="fire">炎</b></p>
+        <p class="small">矢印の先の属性に強い（威力アップ）</p>
+      </div>
+    </div>
+    <button id="btnHowClose" class="sub">とじる</button>
+  </div>
+</div>
+
+<div id="pauseScr" class="screen hidden">
+  <div class="tbox small-box">
+    <h2>一時停止</h2>
+    <button id="btnResume" class="big">再開</button>
+    <button id="btnPauseHow" class="sub">遊び方</button>
+    <button id="btnSound" class="sub">効果音：ON</button>
+    <button id="btnQuit" class="sub">タイトルへ</button>
+  </div>
+</div>
+
+<div id="result" class="screen hidden">
+  <div class="tbox small-box">
+    <h2>試合終了</h2>
+    <div id="resScore">0 - 0</div>
+    <div id="resMsg"></div>
+    <button id="btnAgain" class="big">もう一度</button>
+    <button id="btnResTitle" class="sub">タイトルへ</button>
+  </div>
+</div>
+
+<div id="rotate"><div><div class="rot-icon">⟳</div>スマホを<b>横向き</b>にしてください</div></div>
+<div id="err"></div>
+
+<script src="js/data.js"></script>
+<script src="js/render.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
