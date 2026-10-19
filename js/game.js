@@ -73,7 +73,8 @@ function giveBall(p, quiet) {
     if (prev === p.team && G.pass && G.pass.team === p.team) addGauge(T, 3);
     else if (prev != null && prev !== p.team) addGauge(T, 5);
   }
-  b.owner = p; b.special = null; b.lastTouch = p.team; b.trail.length = 0;
+  b.owner = p; b.special = null; b.lastTouch = p.team; G.lastToucher = p; b.trail.length = 0;
+  if (p.gk) snapKeeperBall(p);
   G.pass = null; G.shotPlan = null; G.possTeam = p.team;
   p.holdT = 0; p.decide = 0.15 + Math.random() * 0.3;
   if (p.team === 0 && !G.auto) G.ctrl = p;
@@ -82,8 +83,8 @@ function releaseBall(p) {
   const b = G.ball;
   b.owner = null; b.special = null;
   b.x = p.x + p.fx * 0.55; b.y = p.y + p.fy * 0.55; b.z = 0.12;
-  b.lastTouch = p.team; p.kickCd = 0.4; p.kickAnim = 0.3; p.mustPass = false;
-  G.lastKicker = p; G.shotPlan = null; G.pass = null;
+  b.lastTouch = p.team; G.lastToucher = p; p.kickCd = 0.4; p.kickAnim = 0.3; p.mustPass = false;
+  G.lastKicker = p; G.lastToucher = p; G.shotPlan = null; G.pass = null;
 }
 function kick(p, vx, vy, vz) {
   releaseBall(p);
@@ -438,7 +439,7 @@ function applyBlock(s, q, sk) {
   FX.text(b.x, b.y, b.z + 2.5, `-${red}`, '#ff8a8a');
   G.shake = 0.5; Sfx.boom();
   if (s.power < 45) {
-    b.special = null; b.vx = -s.ux * 6; b.vy = rnd(-5, 5); b.vz = 5; b.lastTouch = q.team;
+    b.special = null; b.vx = -s.ux * 6; b.vy = rnd(-5, 5); b.vz = 5; b.lastTouch = q.team; G.lastToucher = q;
     banner('ブロック！', `${q.d.name}が止めた`, ELEM[sk.elem].light, 1.3);
     addGauge(teamOf(q), 6);
   } else {
@@ -546,11 +547,11 @@ function movePlayers(dt) {
           p.slideHit = true;
           if (Math.random() < 0.72) {
             b.owner = null; b.vx = p.dashDx * 8 + rnd(-2, 2); b.vy = p.dashDy * 8 + rnd(-2, 2); b.vz = 1.5;
-            b.lastTouch = p.team; o.kickCd = 0.6; o.state = 'down'; o.st = 0.9; G.pass = null;
+            b.lastTouch = p.team; G.lastToucher = p; o.kickCd = 0.6; o.state = 'down'; o.st = 0.9; G.pass = null;
             Sfx.tackle();
           }
         } else if (!b.owner && !b.special && dist(p, b) < 1.3 && b.z < 0.6 && p.kickCd <= 0) {
-          b.vx = p.dashDx * 9; b.vy = p.dashDy * 9; b.lastTouch = p.team; p.kickCd = 0.3;
+          b.vx = p.dashDx * 9; b.vy = p.dashDy * 9; b.lastTouch = p.team; G.lastToucher = p; p.kickCd = 0.3;
         }
         if (p.st <= 0) { p.state = 'down'; p.st = 0.35; }
         break;
@@ -609,6 +610,12 @@ function movePlayers(dt) {
 }
 
 // ===== ボールの物理 =====
+// キーパーが持つボールは手の中（ゴールラインより内側）に置く
+function snapKeeperBall(K) {
+  const b = G.ball, lim = L - 1.0;
+  if (Math.abs(K.x) > lim) K.x = Math.sign(K.x) * lim;
+  b.x = clamp(K.x + K.fx * 0.3, -L + 0.5, L - 0.5); b.y = K.y + K.fy * 0.3; b.z = 1.1;
+}
 function updateBall(dt) {
   const b = G.ball;
   if (b.owner) {
@@ -617,7 +624,8 @@ function updateBall(dt) {
       b.x = o.x + o.fx * 0.1; b.y = o.y + o.fy * 0.1; b.z = THROW_Z; b.vx = b.vy = b.vz = 0;
       return;
     }
-    const off = o.gk && o.gkHold > 0 ? 0.3 : 0.62 + 0.1 * Math.sin(o.run * 2);
+    if (o.gk) { snapKeeperBall(o); b.vx = o.vx; b.vy = o.vy; b.vz = 0; return; }
+    const off = 0.62 + 0.1 * Math.sin(o.run * 2);
     const tx = o.x + o.fx * off, ty = o.y + o.fy * off;
     const a = Math.min(1, dt * 18);
     b.x += (tx - b.x) * a; b.y += (ty - b.y) * a;
@@ -663,7 +671,8 @@ function updateBall(dt) {
           giveBall(K); K.gkHold = 1.4;
           FX.text(K.x, K.y, 2.6, 'キャッチ！', '#ffffff');
         } else {
-          b.vx = -b.vx * 0.3; b.vy = rnd(-9, 9); b.vz = rnd(2, 5); b.lastTouch = K.team;
+          b.vx = teamOf(K).side * (Math.abs(b.vx) * 0.3 + 3); b.vy = rnd(-9, 9); b.vz = rnd(2, 5); b.lastTouch = K.team; G.lastToucher = K;
+          if (Math.abs(b.x) > L - 0.6) b.x = Math.sign(b.x) * (L - 0.6);
           FX.text(K.x, K.y, 2.6, 'セーブ！', '#ffffff');
         }
         addGauge(teamOf(K), 8);
@@ -692,7 +701,7 @@ function checkPossession() {
   const sp = Math.hypot(b.vx, b.vy);
   const ownPass = G.pass && G.pass.user && G.pass.team === best.team;
   if (!best.gk && !ownPass && sp > 21 && Math.random() < 0.5) {
-    b.vx *= -0.25; b.vy = b.vy * 0.3 + rnd(-3, 3); b.vz = 2; best.kickCd = 0.3; b.lastTouch = best.team;
+    b.vx *= -0.25; b.vy = b.vy * 0.3 + rnd(-3, 3); b.vz = 2; best.kickCd = 0.3; b.lastTouch = best.team; G.lastToucher = best;
     return;
   }
   giveBall(best);
@@ -709,7 +718,7 @@ function checkTackles(dt) {
       if (Math.random() < 0.55) giveBall(p);
       else {
         b.owner = null; b.vx = (p.x - o.x) * 2 + rnd(-3, 3); b.vy = (p.y - o.y) * 2 + rnd(-3, 3);
-        b.lastTouch = p.team; o.kickCd = 0.5; p.kickCd = 0.1;
+        b.lastTouch = p.team; G.lastToucher = p; o.kickCd = 0.5; p.kickCd = 0.1;
       }
       o.state = 'down'; o.st = 0.35;
       Sfx.tackle();
@@ -721,6 +730,15 @@ function checkTackles(dt) {
 // ===== ライン外・ゴール =====
 function checkOut() {
   const b = G.ball;
+  if (b.owner && b.owner.gk) return;
+  const lt = G.lastToucher;
+  if (Math.abs(b.x) > L && Math.abs(b.y) < PITCH.goalW && b.z < PITCH.goalH && lt && lt.gk && teamOf(lt).side === -Math.sign(b.x)) {
+    // キーパーのオウンゴールは無し：そのままキーパーがキャッチ
+    lt.x = Math.sign(b.x) * (L - 1.2); lt.state = 'run'; lt.st = 0;
+    b.special = null; b.vx = b.vy = b.vz = 0;
+    giveBall(lt, true); lt.gkHold = 1.2;
+    return;
+  }
   if (Math.abs(b.x) > L) {
     const e = Math.sign(b.x);
     if (Math.abs(b.y) < PITCH.goalW && b.z < PITCH.goalH) { goal(e); return; }

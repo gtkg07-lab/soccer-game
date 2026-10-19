@@ -323,7 +323,7 @@ function drawPlayer(c, p) {
 
 function drawBall(c, b) {
   const s = P(b.x, b.y, b.z + 0.11); if (!s) return;
-  const r = Math.max(2.6, 0.17 * s.k);
+  const r = Math.max(4, 0.26 * s.k);
   const sp = b.special;
   if (sp) { FX.drawSpecialBall(c, b, s, r); return; }
   c.fillStyle = '#fff';
@@ -598,7 +598,7 @@ function render() {
   // 影
   for (const p of G.players) drawShadow(c, p.x, p.y, p.state === 'down' || p.state === 'dive' ? 0.9 : 0.42);
   const b = G.ball;
-  drawShadow(c, b.x, b.y, b.special ? 0.5 : 0.2);
+  drawShadow(c, b.x, b.y, b.special ? 0.5 : 0.3);
   // 奥から順に描く
   const ents = G.players.slice();
   ents.push(b);
