@@ -13,7 +13,7 @@ const G = {
   pass: null, shotPlan: null, restart: null, protectT: 0, switchT: 0, possTeam: 0,
   lastKicker: null, scorer: null, kickoffTeam: 0, resultShown: false,
 };
-const Input = { jx: 0, jy: 0, dash: false, actions: [] };
+const Input = { jx: 0, jy: 0, dash: false, actions: [], charge: null };
 
 const teamOf = p => G.teams[p.team];
 const userControls = p => !G.auto && p.team === 0 && p === G.ctrl;
@@ -145,6 +145,98 @@ function doPass(p, t, forceLob) {
   else { const v0 = Math.min(34, 0.9 * d + 7); kick(p, ux * v0, uy * v0, 0); }
   G.pass = { team: p.team, receiver: t, tx, ty, until: G.t + 3.5 };
   if (p.team === 0 && !G.auto) G.ctrl = t;
+}
+
+// ===== ユーザーのパス（イーフト式：パス＝グラウンダー、フライパス＝浮き球。押す長さで強さ） =====
+function passPower() {
+  const ch = Input.charge; if (!ch) return 0;
+  return clamp((performance.now() - ch.t0) / 900, 0, 1);
+}
+// スティックの方向に飛ぶ軌道を決める（表示と実際のキックで同じ計算を使う）
+function planUserPass(p, fly, power) {
+  let nx = Input.jx, ny = Input.jy, l = Math.hypot(nx, ny);
+  if (l < 0.3) { nx = p.fx; ny = p.fy; l = Math.hypot(nx, ny) || 1; }
+  nx /= l; ny /= l;
+  const want = fly ? 15 + power * 35 : 7 + power * 30;
+  let best = null, bs = 1e9;
+  for (const t of teamOf(p).players) {
+    if (t === p || t.state === 'down') continue;
+    const tx = t.x + t.vx * 0.4, ty = t.y + t.vy * 0.4;
+    const rx = tx - p.x, ry = ty - p.y, d = Math.hypot(rx, ry);
+    if (d < 3) continue;
+    const along = rx * nx + ry * ny;
+    if (along < 2 || along / d < 0.8) continue;
+    const perp = Math.abs(rx * ny - ry * nx);
+    const sc = perp * 1.5 + Math.abs(along - want) * 0.35 + (t.gk ? 25 : 0);
+    if (sc < bs) { bs = sc; best = { t, tx, ty, along, perp, d }; }
+  }
+  let dx = nx, dy = ny, d, recv = null;
+  if (best) {
+    recv = best.t;
+    // 狙いが味方にほぼ向いていれば、その味方の足元へ吸いつける
+    if (Math.atan2(best.perp, best.along) < 0.22) { dx = (best.tx - p.x) / best.d; dy = (best.ty - p.y) / best.d; d = best.d; }
+    else d = best.along;
+  } else d = want;
+  // ピッチの外に出ないように距離を詰める
+  let tmax = 60;
+  if (dx > 1e-3) tmax = Math.min(tmax, (L - 0.6 - p.x) / dx); else if (dx < -1e-3) tmax = Math.min(tmax, (-L + 0.6 - p.x) / dx);
+  if (dy > 1e-3) tmax = Math.min(tmax, (W - 0.6 - p.y) / dy); else if (dy < -1e-3) tmax = Math.min(tmax, (-W + 0.6 - p.y) / dy);
+  d = clamp(Math.min(d, tmax - (fly ? 5 : 2)), 3, 55);
+  const ex = p.x + dx * d, ey = p.y + dy * d;
+  if (!recv) {
+    let bd = 1e9;
+    for (const t of teamOf(p).players) { if (t === p || t.gk) continue; const q = Math.hypot(t.x - ex, t.y - ey); if (q < bd) { bd = q; recv = t; } }
+  }
+  const T = fly ? 0.8 + d / 26 : 0;
+  return { dx, dy, d, ex, ey, recv, fly, T, room: Math.max(0.5, tmax - d) };
+}
+function doUserPass(p, fly, power) {
+  const pl = planUserPass(p, fly, power);
+  p.fx = pl.dx; p.fy = pl.dy;
+  const sx = p.x + pl.dx * 0.55, sy = p.y + pl.dy * 0.55;
+  const opp = G.teams[1 - p.team].players;
+  const blockers = [];
+  if (fly) {
+    const T = pl.T, vh = pl.d / T;
+    kick(p, pl.dx * vh, pl.dy * vh, 4.9 * T);
+    // 低い位置（離れ際と落下点）でだけ相手が触れられる
+    for (const q of opp) {
+      for (let i = 0; i <= 20; i++) {
+        const u = i / 20, t = u * T, z = 4.9 * T * t - 4.9 * t * t;
+        if (z > 2.3) continue;
+        if (Math.hypot(q.x - (sx + pl.dx * pl.d * u), q.y - (sy + pl.dy * pl.d * u)) < 1.6) { blockers.push(q); break; }
+      }
+    }
+  } else {
+    // 受け手が間に合う速さにする
+    const r = pl.recv;
+    const tr = r ? Math.hypot(r.x - pl.ex, r.y - pl.ey) / (8.2 * r.d.spd) + 0.25 : 0;
+    let varr = 7;
+    for (; varr > 1.6; varr -= 0.4) { const v0 = 0.9 * pl.d + varr; if (Math.log(v0 / varr) / 0.9 >= tr) break; }
+    varr = Math.max(0.8, Math.min(varr, pl.room * 0.9));
+    const v0 = Math.min(40, 0.9 * pl.d + varr);
+    kick(p, pl.dx * v0, pl.dy * v0, 0);
+    // 軌道の線上（＋止まるまでの少し先）にいる相手だけが奪える
+    const len = pl.d + varr / 0.9;
+    for (const q of opp) {
+      const u = (q.x - sx) * pl.dx + (q.y - sy) * pl.dy;
+      if (u < -0.5 || u > len + 0.5) continue;
+      if (Math.abs((q.x - sx) * pl.dy - (q.y - sy) * pl.dx) < 1.3) blockers.push(q);
+    }
+  }
+  const b = G.ball; b.x = sx; b.y = sy;
+  if (!fly) b.z = 0;
+  G.pass = { team: p.team, receiver: pl.recv, tx: pl.ex, ty: pl.ey, dx: pl.dx, dy: pl.dy, until: G.t + 6, user: true, fly, blockers };
+  if (pl.recv && p.team === 0 && !G.auto) G.ctrl = pl.recv;
+}
+// 受け手は軌道上の落下点・到達点へ走り、ボールが来たら取りにいく
+function receiveMove(p) {
+  const b = G.ball, ps = G.pass;
+  const db = Math.hypot(b.x - p.x, b.y - p.y);
+  let passed = false;
+  if (ps.dx != null) passed = (b.x - ps.tx) * ps.dx + (b.y - ps.ty) * ps.dy > -0.5;
+  if (db < 6 || passed) moveTo(p, b.x + b.vx * 0.12, b.y + b.vy * 0.12, 1.3);
+  else moveTo(p, ps.tx, ps.ty, 1.3);
 }
 
 // ===== 通常シュート =====
@@ -502,7 +594,11 @@ function updateBall(dt) {
   b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
   if (b.z <= 0) {
     b.z = 0;
-    if (b.vz < -2) { b.vz = -b.vz * 0.45; b.vx *= 0.85; b.vy *= 0.85; Sfx.bounce(); } else b.vz = 0;
+    if (b.vz < -2) {
+      // ユーザーのフライパスは着地点で止まりやすくする
+      const damp = G.pass && G.pass.user && G.pass.fly ? 0.22 : 0.85;
+      b.vz = -b.vz * (damp < 0.5 ? 0.3 : 0.45); b.vx *= damp; b.vy *= damp; Sfx.bounce();
+    } else b.vz = 0;
   }
   if (b.z === 0 && b.vz === 0) {
     const f = Math.exp(-0.9 * dt); b.vx *= f; b.vy *= f;
@@ -546,6 +642,8 @@ function checkPossession() {
   let best = null, bd = 1e9;
   for (const p of G.players) {
     if (p.kickCd > 0 || p.state === 'down' || p.state === 'dive' || p.state === 'slide') continue;
+    const ps = G.pass;
+    if (ps && ps.user && p.team !== ps.team && !ps.blockers.includes(p)) continue;
     const inBox = p.gk && Math.abs(p.x) > L - 17 && Math.abs(p.y) < 20.5;
     const reach = inBox ? 1.5 : 0.95;
     if (!inBox && b.z > 1.2) continue;
@@ -554,7 +652,8 @@ function checkPossession() {
   }
   if (!best) return;
   const sp = Math.hypot(b.vx, b.vy);
-  if (!best.gk && sp > 21 && Math.random() < 0.5) {
+  const ownPass = G.pass && G.pass.user && G.pass.team === best.team;
+  if (!best.gk && !ownPass && sp > 21 && Math.random() < 0.5) {
     b.vx *= -0.25; b.vy = b.vy * 0.3 + rnd(-3, 3); b.vz = 2; best.kickCd = 0.3; b.lastTouch = best.team;
     return;
   }
@@ -795,12 +894,7 @@ function aiOutfield(p, dt) {
   const b = G.ball, T = teamOf(p), s = T.side;
   const ownPoss = b.owner ? b.owner.team === p.team : null;
   const manual = p.team === 0 && !G.auto;
-  if (G.pass && G.pass.receiver === p && !b.owner) {
-    const db = Math.hypot(b.x - p.x, b.y - p.y);
-    if (db < 6) moveTo(p, b.x + b.vx * 0.15, b.y + b.vy * 0.15, 1.3);
-    else moveTo(p, G.pass.tx, G.pass.ty, 1.2);
-    return;
-  }
+  if (G.pass && G.pass.receiver === p && !b.owner) { receiveMove(p); return; }
   if (!b.owner && !(G.pass && G.pass.team === p.team)) {
     const first = T.near[0] && T.near[0].p;
     let chaser = first;
@@ -859,12 +953,13 @@ function handleAction(a) {
   const p = G.ctrl, b = G.ball;
   if (!p || p.state !== 'run') return;
   const has = b.owner === p;
-  if (a === 'pass') {
-    if (has) { const t = pickPassTarget(p, Input.jx, Input.jy); if (t) doPass(p, t, p.gk && dist(p, t) > 25); }
-    else if (!(G.pass && G.pass.team === 0) && !(b.owner && b.owner.team === 0)) switchCtrl();
+  if (a && a.a === 'kickpass') {
+    if (has) doUserPass(p, a.fly, a.power);
+  } else if (a === 'pass') {
+    if (!has && !(G.pass && G.pass.team === 0) && !(b.owner && b.owner.team === 0)) switchCtrl();
   } else if (a === 'shoot') {
     if (has) {
-      if (p.gk || p.mustPass) { const t = pickPassTarget(p, Input.jx, Input.jy); if (t) doPass(p, t, true); }
+      if (p.gk || p.mustPass) doUserPass(p, true, 0.6);
       else doShoot(p, Math.abs(Input.jy) > 0.3 ? Input.jy : null);
     } else if (!b.owner || b.owner.team !== 0) startSlide(p, Input.jx, Input.jy);
   } else if (a === 'skill') {
@@ -901,7 +996,8 @@ function step(dt) {
   const b = G.ball;
   for (const p of G.players) {
     if (p.state !== 'run') continue;
-    if (userControls(p) && !(b.owner === p && (p.gk || p.mustPass) && p.holdT > 4)) userMove(p);
+    if (userControls(p) && G.pass && G.pass.receiver === p && !b.owner) receiveMove(p);
+    else if (userControls(p) && !(b.owner === p && (p.gk || p.mustPass) && p.holdT > 4)) userMove(p);
     else if (p.gk) aiKeeper(p, dt);
     else if (b.owner === p) aiCarrier(p, dt);
     else aiOutfield(p, dt);
@@ -921,8 +1017,16 @@ function updateCamera(rdt) {
   let tx = b.x, ty = b.y;
   if (b.special) tx += b.special.ux * 6;
   G.cam.x += (clamp(tx, -L + 20, L - 20) - G.cam.x) * Math.min(1, rdt * (b.special ? 7 : 2.6));
-  G.cam.y += (clamp(ty * 0.6, -16, 12) - G.cam.y) * Math.min(1, rdt * 2);
-  const zt = b.special ? 1.18 : G.phase === 'goal' ? 1.1 : 1;
+  let cy = clamp(ty * 0.75, -20, 12);
+  let zt = b.special ? 1.12 : G.phase === 'goal' ? 1.08 : 1;
+  // 手前のタッチライン付近は少し引いて映す
+  if (ty < -16) zt = Math.min(zt, 1 - clamp((-ty - 16) / 16, 0, 1) * 0.18);
+  // スローインなどのリスタートはコート全体を映す
+  if (G.phase === 'dead' || (G.phase === 'play' && b.owner && b.owner.mustPass)) {
+    const near = (G.restart ? G.restart.y : b.y) < 0;
+    zt = 0.74; cy = near ? -17 : 8;
+  }
+  G.cam.y += (cy - G.cam.y) * Math.min(1, rdt * 2.5);
   G.cam.zoom += (zt - G.cam.zoom) * Math.min(1, rdt * 2);
 }
 function update(rdt) {

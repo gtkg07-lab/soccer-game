@@ -169,6 +169,7 @@ const UI = {
     const set = (id, txt) => { const s = $(id).firstElementChild; if (s.textContent !== txt) s.textContent = txt; };
     set('bPass', atk ? 'パス' : '切替');
     set('bShoot', atk ? (p.gk || p.mustPass ? 'ロング' : 'シュート') : 'スライ\nディング');
+    $('bFly').classList.toggle('dim', !atk);
     const ready = G.phase === 'play' && skillOptions(p).some(o => o.ok);
     $('bSkill').classList.toggle('ready', ready);
   },
@@ -204,9 +205,14 @@ function setupInput() {
       e.preventDefault(); b.classList.add('down');
       if (act === 'dash') Input.dash = true;
       else if (act === 'skill') UI.openSkillMenu(G.ctrl);
+      else if (act === 'pass' || act === 'fly') passDown(act === 'fly');
       else Input.actions.push(act);
     });
-    const up = () => { b.classList.remove('down'); if (act === 'dash') Input.dash = false; };
+    const up = () => {
+      b.classList.remove('down');
+      if (act === 'dash') Input.dash = false;
+      if (act === 'pass' || act === 'fly') passUp(act === 'fly');
+    };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
   }
   // キーボード（PC用）
@@ -220,7 +226,8 @@ function setupInput() {
   addEventListener('keydown', e => {
     if (G.demo) return;
     if (keys[e.code]) return; keys[e.code] = true; kstick();
-    if (e.code === 'KeyJ') Input.actions.push('pass');
+    if (e.code === 'KeyJ') passDown(false);
+    if (e.code === 'KeyU') passDown(true);
     if (e.code === 'KeyK') Input.actions.push('shoot');
     if (e.code === 'KeyL') UI.openSkillMenu(G.ctrl);
     if (e.code === 'ShiftLeft' || e.code === 'Space') Input.dash = true;
@@ -233,8 +240,22 @@ function setupInput() {
   });
   addEventListener('keyup', e => {
     keys[e.code] = false; kstick();
+    if (e.code === 'KeyJ') passUp(false);
+    if (e.code === 'KeyU') passUp(true);
     if (e.code === 'ShiftLeft' || e.code === 'Space') Input.dash = false;
   });
+}
+// パス／フライパス：ボールを持っていれば押している間に強さを溜め、離したら蹴る
+function passDown(fly) {
+  const p = G.ctrl;
+  if (!G.auto && p && G.ball.owner === p) Input.charge = { fly, t0: performance.now() };
+  else if (!fly) Input.actions.push('pass');
+}
+function passUp(fly) {
+  const ch = Input.charge;
+  if (!ch || ch.fly !== fly) return;
+  Input.actions.push({ a: 'kickpass', fly, power: passPower() });
+  Input.charge = null;
 }
 function toggleAuto() {
   if (G.demo || !G.ball) return;
@@ -320,6 +341,8 @@ addEventListener('DOMContentLoaded', () => {
       if (until === 'goal' && G.phase === 'goal' && G.phaseT > 0.8) break;
       if (until === 'special' && G.ball.special && G.ball.special.trav > +(q.get('tr') || 8) && !G.freeze) break;
     }
+    if (q.has('throw')) { G.phase = 'play'; setRestart('throw', 0, 8, (q.get('throw') === 'far' ? 1 : -1) * (W - 0.5)); for (let i = 0; i < 80; i++) update(1 / 60); }
+    if (q.has('guide')) { G.phase = 'play'; Input.jx = 0.9; Input.jy = 0.3; Input.charge = { fly: q.get('guide') === 'fly', t0: performance.now() - 450 }; for (let i = 0; i < 2; i++) update(1 / 60); }
     if (q.has('menu')) { G.phase = 'play'; UI.openSkillMenu(G.ctrl); }
     if (q.has('stop')) G.paused = true;
   } else {

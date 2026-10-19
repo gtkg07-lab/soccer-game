@@ -4,7 +4,7 @@ const FONT = '"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif';
 const TITLE_FONT = '"Dela Gothic One","Hiragino Sans","Noto Sans JP",sans-serif';
 const R = { cv: null, ctx: null, W: 0, H: 0, dpr: 1, f: 1, cy: 0, sx: 0, sy: 0, safeL: 0, safeR: 0,
   C: { x: 0, y: 0, z: 0, cos: 1, sin: 0 } };
-const CAM = { th: 17 * Math.PI / 180, dist: 38 };
+const CAM = { th: 27 * Math.PI / 180, dist: 44 };
 
 function renderInit(cv) {
   R.cv = cv; R.ctx = cv.getContext('2d');
@@ -30,7 +30,7 @@ function setupCamera() {
   C.x = G.cam.x; C.y = G.cam.y - D * Math.cos(th); C.z = D * Math.sin(th);
   C.cos = Math.cos(th); C.sin = Math.sin(th);
   R.f = Math.max(R.W, R.H * 1.7) * 1.02;
-  R.cy = R.H * 0.56;
+  R.cy = R.H * 0.54;
   R.sx = (Math.random() - 0.5) * G.shake * 16;
   R.sy = (Math.random() - 0.5) * G.shake * 16;
 }
@@ -592,6 +592,7 @@ function render() {
   drawPitch(c);
   drawGoal(c, G.cam.x < 0 ? 1 : -1);
   drawGoal(c, G.cam.x < 0 ? -1 : 1);
+  drawPassGuide(c);
   // 影
   for (const p of G.players) drawShadow(c, p.x, p.y, p.state === 'down' || p.state === 'dive' ? 0.9 : 0.42);
   const b = G.ball;
@@ -621,6 +622,62 @@ function render() {
     // スローモーション中の演出
     c.fillStyle = 'rgba(20,0,40,0.25)'; c.fillRect(0, 0, R.W, R.H);
   }
+}
+
+// パスの軌道ガイド（自分がボールを持っている間ずっと表示）
+function drawPassGuide(c) {
+  if (G.auto || G.demo || G.freeze) return;
+  const p = G.ctrl, b = G.ball;
+  // パス中は残りの軌道と到達点を表示
+  if (G.pass && G.pass.user && !b.owner && G.pass.receiver) {
+    const e = P(G.pass.tx, G.pass.ty, 0);
+    if (e) { c.strokeStyle = 'rgba(255,225,77,0.8)'; c.lineWidth = 2; c.beginPath(); c.ellipse(e.x, e.y, 0.9 * e.k, 0.3 * e.k, 0, 0, 7); c.stroke(); }
+    return;
+  }
+  if (!p || b.owner !== p || (G.phase !== 'play' && G.phase !== 'kickoff')) return;
+  const ch = Input.charge;
+  const fly = ch ? ch.fly : false, power = passPower();
+  const pl = planUserPass(p, fly, power);
+  const sx = p.x + pl.dx * 0.55, sy = p.y + pl.dy * 0.55;
+  const a = ch ? 0.95 : 0.5;
+  c.save();
+  c.lineCap = 'round';
+  if (fly) {
+    // 放物線と地面の影
+    c.setLineDash([2, 6]); c.strokeStyle = `rgba(255,255,255,${a * 0.5})`; c.lineWidth = 2;
+    polyW(c, [[sx, sy, 0], [pl.ex, pl.ey, 0]]); c.stroke();
+    c.setLineDash([]);
+    c.beginPath(); let first = true;
+    for (let i = 0; i <= 24; i++) {
+      const u = i / 24, t = u * pl.T, z = 4.9 * pl.T * t - 4.9 * t * t;
+      const q = P(sx + pl.dx * pl.d * u, sy + pl.dy * pl.d * u, z); if (!q) continue;
+      if (first) { c.moveTo(q.x, q.y); first = false; } else c.lineTo(q.x, q.y);
+    }
+    c.strokeStyle = `rgba(120,220,255,${a})`; c.lineWidth = 3; c.stroke();
+  } else {
+    c.strokeStyle = `rgba(255,225,77,${a})`; c.lineWidth = 3;
+    polyW(c, [[sx, sy, 0.05], [pl.ex, pl.ey, 0.05]]); c.stroke();
+    // 矢印
+    const e = P(pl.ex, pl.ey, 0.05), m = P(pl.ex - pl.dx * 1.2 - pl.dy * 0.6, pl.ey - pl.dy * 1.2 + pl.dx * 0.6, 0.05), n = P(pl.ex - pl.dx * 1.2 + pl.dy * 0.6, pl.ey - pl.dy * 1.2 - pl.dx * 0.6, 0.05);
+    if (e && m && n) { c.fillStyle = `rgba(255,225,77,${a})`; c.beginPath(); c.moveTo(e.x, e.y); c.lineTo(m.x, m.y); c.lineTo(n.x, n.y); c.closePath(); c.fill(); }
+  }
+  // 到達点と受け手
+  const e = P(pl.ex, pl.ey, 0);
+  if (e) { c.strokeStyle = fly ? `rgba(120,220,255,${a})` : `rgba(255,225,77,${a})`; c.lineWidth = 2; c.beginPath(); c.ellipse(e.x, e.y, 1.0 * e.k, 0.33 * e.k, 0, 0, 7); c.stroke(); }
+  if (pl.recv) {
+    const r = P(pl.recv.x, pl.recv.y, 0);
+    if (r) { c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 2; c.beginPath(); c.ellipse(r.x, r.y, 0.7 * r.k, 0.24 * r.k, 0, 0, 7); c.stroke(); }
+  }
+  // 強さゲージ（押している間）
+  if (ch) {
+    const f = P(p.x, p.y, 0);
+    if (f) {
+      const w = 54, h = 7, x = f.x - w / 2, y = f.y + 22;
+      c.fillStyle = 'rgba(0,0,0,0.7)'; c.fillRect(x - 1, y - 1, w + 2, h + 2);
+      c.fillStyle = fly ? '#78dcff' : '#ffe14d'; c.fillRect(x, y, w * Math.max(0.04, power), h);
+    }
+  }
+  c.restore();
 }
 
 function drawCursor(c) {
