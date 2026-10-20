@@ -87,7 +87,7 @@ const UI = {
     const cards = box.querySelector('.cards'); cards.innerHTML = '';
     for (const it of items) {
       const b = document.createElement('button');
-      b.className = 'card' + (it.ok ? '' : ' off');
+      b.className = 'card' + (it.ok ? '' : ' off') + (it.sk && it.sk.ultimate ? ' ult' : '');
       if (it.plain) {
         b.innerHTML = `<div class="cn">${it.label}</div><div class="ci">ゲージを使わない</div>`;
         b.style.setProperty('--ec', '#8892b0');
@@ -297,6 +297,8 @@ function setupScreens() {
   $('btnAgain').addEventListener('click', () => UI.startMatch());
   $('btnResTitle').addEventListener('click', () => UI.toTitle());
   document.addEventListener('contextmenu', e => e.preventDefault());
+  // カットイン・必殺モーションは画面タップで飛ばせる
+  document.addEventListener('pointerdown', () => { const f = G.freeze; if (f && (f.type === 'cutin' || f.type === 'motion') && f.t > 0.35) f.t = f.dur; });
   // iPhone のピンチ・ダブルタップで画面が拡大されないようにする
   for (const ev of ['gesturestart', 'gesturechange', 'gestureend', 'dblclick']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
   document.addEventListener('touchstart', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
@@ -360,6 +362,7 @@ addEventListener('DOMContentLoaded', () => {
       update(1 / 60);
       if (until && G.freeze && G.freeze.type === until && G.freeze.t > +(q.get('ft') || 0.5)) break;
       if (until === 'goal' && G.phase === 'goal' && G.phaseT > 0.8) break;
+      if (until && until.startsWith('m-') && G.freeze && G.freeze.type === 'motion' && G.freeze.sk.type === until.slice(2) && G.freeze.t > +(q.get('ft') || 0.5)) break;
       if (until === 'kcombo' && G.freeze && G.freeze.sk && G.freeze.sk.type === 'keeper' && G.freeze.sk.combo && G.freeze.t > 0.7) break;
       if (until === 'dash' && G.players.some(p => p.state === 'dash' && !p.dashTarget && p.dashT > +(q.get('dt') || 0.4))) break;
       if (until === 'special' && G.ball.special && G.ball.special.trav > +(q.get('tr') || 8) && !G.freeze) break;

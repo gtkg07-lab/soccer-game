@@ -343,11 +343,13 @@ function skillOptions(p) {
       if (sk.combo && !comboPartner(p)) { ok = false; why = '相方が遠い'; }
     } else if (sk.type === 'dribble') {
       if (!hasBall) continue;
+      if (T.gauge >= 100) { res.push({ sk, ok, why }); res.push({ sk: ULT[k], ok: true, why: '' }); continue; }
     } else if (sk.type === 'tackle') {
       if (hasBall) continue;
       const o = b.owner;
       if (!o || o.team === p.team || dist(o, p) > 8) { ok = false; why = '相手が遠い'; }
       else if (o.mustPass) { ok = false; why = 'リスタート中'; }
+      else if (o.gk) { ok = false; why = 'キーパーが保持中'; }
     } else continue;
     res.push({ sk, ok, why });
   }
@@ -365,18 +367,28 @@ function useSkill(p, sk) {
     startFreeze({ type: 'cutin', dur: sk.combo ? 1.7 : 1.35, p, sk, partner, onEnd: () => launchSpecial(p, sk, partner) });
   } else if (sk.type === 'dribble') {
     if (b.owner !== p) return false;
+    if (sk.ultimate && T.gauge < 100) return false;
     addGauge(T, -sk.cost);
-    startFreeze({ type: 'cutin', dur: 0.95, p, sk, onEnd: () => startDash(p, sk) });
+    startFreeze({ type: 'cutin', dur: sk.ultimate ? 1.2 : 0.95, p, sk, onEnd: () => { if (sk.ultimate) knockbackAll(p, sk); startDash(p, sk); } });
   } else if (sk.type === 'tackle') {
     const o = b.owner;
-    if (!o || o.team === p.team || dist(o, p) > 8 || o.mustPass) return false;
+    if (!o || o.team === p.team || dist(o, p) > 8 || o.mustPass || o.gk) return false;
     addGauge(T, -sk.cost);
     startFreeze({ type: 'cutin', dur: 0.95, p, sk, onEnd: () => startTackleSkill(p, sk) });
   } else return false;
   Sfx.cutin();
   return true;
 }
+const MOTION_DUR = { shoot: 1.2, dribble: 0.95, tackle: 0.85, block: 0.85, keeper: 1.05 };
 function startFreeze(f) {
+  if (f.type === 'cutin' && !f.noMotion) {
+    const next = f.onEnd;
+    f.dur = Math.max(0.85, f.dur - 0.2);
+    f.onEnd = () => {
+      startFreeze({ type: 'motion', dur: (MOTION_DUR[f.sk.type] || 1) + (f.partner ? 0.25 : 0), p: f.p, sk: f.sk, partner: f.partner, onEnd: next });
+      Sfx.whoosh();
+    };
+  }
   f.t = 0; G.freeze = f; G.timeScale = 1;
   UI.closeMenu();
 }
@@ -394,7 +406,8 @@ function launchSpecial(p, sk, partner) {
   const far = 1 - Math.max(0, d - 16) * 0.012;
   const power = (sk.combo ? sk.power : sk.power * (0.85 + 0.15 * p.d.shot)) * far;
   const s = { sk, team: p.team, power, ox, oy, oz, tx: gx, ty, tz, dist: d, trav: 0, ux: dx / d, uy: dy / d,
-    spd: sk.fx === 'meteor' ? 27 : 32, K: G.teams[1 - p.team].players[0], kicker: p };
+    spd: sk.fx === 'meteor' || sk.path === 'drop' ? 27 : 32, K: G.teams[1 - p.team].players[0], kicker: p,
+    curveSign: ty > oy ? -1 : 1 };
   s.blocker = findBlocker(s, 1 - p.team);
   b.special = s; b.z = oz; b.trail.length = 0;
   p.vz = 5; if (partner) partner.vz = 5;
@@ -421,8 +434,12 @@ function updateSpecial(dt) {
   const u = s.trav / s.dist;
   const px = b.x, py = b.y;
   b.x = s.ox + (s.tx - s.ox) * u;
-  b.y = s.oy + (s.ty - s.oy) * u + (s.sk.fx === 'wind' ? Math.sin(u * Math.PI * 3) * 1.4 * (1 - u) : 0);
-  b.z = s.oz + (s.tz - s.oz) * Math.min(1, u) + Math.sin(Math.min(1, u) * Math.PI) * (ARC[s.sk.fx] || 1);
+  const path = s.sk.path, uu = Math.min(1, u);
+  let lat = s.sk.fx === 'wind' && !path ? Math.sin(u * Math.PI * 3) * 1.4 * (1 - u) : 0;
+  if (path === 'curve') lat = Math.sin(uu * Math.PI) * 7 * s.curveSign;
+  b.y = s.oy + (s.ty - s.oy) * u + lat;
+  const arc = path === 'drop' ? 12 : path === 'curve' ? 1.2 : (ARC[s.sk.fx] || 1);
+  b.z = s.oz + (s.tz - s.oz) * uu + (path === 'drop' ? Math.pow(Math.sin(uu * Math.PI), 0.7) : Math.sin(uu * Math.PI)) * arc;
   b.vx = (b.x - px) / Math.max(dt, 1e-4); b.vy = (b.y - py) / Math.max(dt, 1e-4); b.vz = 0;
   b.spin += dt * 40;
   FX.trail(b, dt);
@@ -527,6 +544,22 @@ function startClash(s) {
     }
   } });
 }
+// 覚醒技：敵のフィールドプレーヤー全員を吹き飛ばす（0.5秒）
+function knockbackAll(p, sk) {
+  const E = ELEM[sk.elem];
+  for (const q of G.teams[1 - p.team].players) {
+    if (q.gk) continue;
+    const vx = q.x - p.x, vy = q.y - p.y, l = Math.hypot(vx, vy) || 1;
+    q.state = 'down'; q.st = 0.5; q.vx = vx / l * 11; q.vy = vy / l * 11; q.vz = 3;
+    q.dashTarget = null;
+    FX.burst(q.x, q.y, 1, sk.fx, 10);
+  }
+  for (let i = 0; i < 3; i++) FX.ring(p.x, p.y, 0.2, i ? E.color : '#ffffff', 14 + i * 8, 0.6 + i * 0.15);
+  FX.burst(p.x, p.y, 1, sk.fx, 80);
+  G.shake = 1.0; G.flash = 0.8; G.flashColor = E.light;
+  banner('覚醒！', '敵が全員ふっとんだ！', E.light, 1.1);
+  Sfx.boom();
+}
 function startDash(p, sk) {
   let dx, dy;
   if (userControls(p) && Math.hypot(Input.jx, Input.jy) > 0.3) { dx = Input.jx; dy = Input.jy; }
@@ -539,7 +572,7 @@ function startDash(p, sk) {
 }
 function startTackleSkill(p, sk) {
   const o = G.ball.owner;
-  if (!o || o.team === p.team || o.mustPass) return;
+  if (!o || o.team === p.team || o.mustPass || o.gk) return;
   p.state = 'dash'; p.st = 0.45; p.dashTarget = o; p.dashSk = sk; p.dashHit = [];
   Sfx.whoosh();
 }
@@ -584,7 +617,7 @@ function movePlayers(dt) {
         const sp = 10 * (0.3 + Math.max(0, p.st) / 0.5);
         p.vx = p.dashDx * sp; p.vy = p.dashDy * sp;
         const o = b.owner;
-        if (!p.slideHit && o && o.team !== p.team && dist(p, o) < 1.5 && !o.mustPass && !(o.gk && o.gkHold > 0)) {
+        if (!p.slideHit && o && o.team !== p.team && dist(p, o) < 1.5 && !o.mustPass && !o.gk) {
           p.slideHit = true;
           if (Math.random() < 0.72) {
             b.owner = null; b.vx = p.dashDx * 8 + rnd(-2, 2); b.vy = p.dashDy * 8 + rnd(-2, 2); b.vz = 1.5;
@@ -604,7 +637,7 @@ function movePlayers(dt) {
           const dx = (o.x - p.x) / (d || 1), dy = (o.y - p.y) / (d || 1);
           p.vx = dx * 22; p.vy = dy * 22; p.fx = dx; p.fy = dy;
           if (d < 1.1) {
-            if (b.owner === o && !o.mustPass) {
+            if (b.owner === o && !o.mustPass && !o.gk) {
               o.state = 'down'; o.st = 1.6; o.vx = dx * 6; o.vy = dy * 6;
               giveBall(p);
               FX.burst(o.x, o.y, 1, p.dashSk.fx, 50); G.shake = 0.5;
@@ -773,7 +806,7 @@ function checkPossession() {
 }
 function checkTackles(dt) {
   const b = G.ball, o = b.owner;
-  if (!o || o.state === 'dash' || o.mustPass || G.protectT > 0 || (o.gk && o.gkHold > 0)) return;
+  if (!o || o.state === 'dash' || o.mustPass || o.gk || G.protectT > 0) return;
   for (const p of G.teams[1 - o.team].players) {
     if (p.state !== 'run' || p.gk) continue;
     if (dist(p, o) > 1.1) continue;
@@ -922,7 +955,7 @@ function aiKeeper(K, dt) {
   if (K.state !== 'run') return;
   if (b.owner === K) {
     K.dvx = 0; K.dvy = 0;
-    if (K.holdT > 1.3 && K.waitT <= 0) {
+    if (K.holdT > 1.9 && K.waitT <= 0) {
       const opt = bestPassOption(K) || { t: T.players[2] };
       doPass(K, opt.t, dist(K, opt.t) > 25);
     }
@@ -984,6 +1017,10 @@ function aiCarrier(p, dt) {
       if (sks.length && dg < 26 && Math.random() < pr) { useSkill(p, sks[0]); return; }
       if (dg < 17 || Math.random() < 0.3) { doShoot(p, null); return; }
     }
+    if (press < 4 && T.gauge >= 100 && Math.random() < 0.35) {
+      const uk = p.d.skills.find(k => ULT[k]);
+      if (uk) { useSkill(p, ULT[uk]); return; }
+    }
     if (press < 2.6 && Math.random() < 0.25) {
       const ds = p.d.skills.map(k => SKILLS[k]).find(k => k.type === 'dribble' && T.gauge >= k.cost + 35);
       if (ds) { useSkill(p, ds); return; }
@@ -1021,12 +1058,10 @@ function aiOutfield(p, dt) {
   const manual = p.team === 0 && !G.auto;
   if (G.pass && G.pass.receiver === p && !b.owner) { receiveMove(p); return; }
   if (!b.owner && !(G.pass && G.pass.team === p.team)) {
-    const first = T.near[0] && T.near[0].p;
-    let chaser = first;
-    if (manual) {
-      const c = G.ctrl;
-      chaser = first !== c && first && c && T.near[0].d < dist(c, b) - 3 ? first : null;
-    }
+    // 各チームでボールに近い3人（15m以内、1番近い選手は距離に関係なく）が寄る。自分で操作している選手は除く
+    const cand = T.near.filter(e => !(manual && e.p === G.ctrl));
+    const rank = cand.findIndex(e => e.p === p);
+    const chaser = rank === 0 || (rank > 0 && rank < 3 && cand[rank].d < 15) ? p : null;
     if (p === chaser) {
       const ps = G.pass;
       if (ps && ps.user && ps.team !== p.team && !ps.blockers.includes(p) && ps.receiver) {
@@ -1036,7 +1071,9 @@ function aiOutfield(p, dt) {
         return;
       }
       const t = Math.min(1.2, dist(p, b) / 8);
-      moveTo(p, b.x + b.vx * t, b.y + b.vy * t, 1.3, true);
+      // 2人目以降は少しずらして重ならないように
+      const off = rank === 0 ? 0 : (rank === 1 ? 1.6 : -1.6);
+      moveTo(p, b.x + b.vx * t - teamOf(p).side * Math.abs(off) * 0.5, b.y + b.vy * t + off, rank === 0 ? 1.3 : 1.15, true);
       return;
     }
   }
@@ -1047,6 +1084,11 @@ function aiOutfield(p, dt) {
     if (manual) { presser = null; cover = first === G.ctrl ? second : first; }
     if (p === presser) {
       const d = dist(p, o);
+      if (o.gk) {
+        const vx = p.x - o.x, vy = p.y - o.y, l = Math.hypot(vx, vy) || 1;
+        moveTo(p, o.x + vx / l * 11, o.y + vy / l * 11, 1.0);
+        return;
+      }
       if (o.mustPass) {
         // スローインなどの間は少し離れて待つ
         const vx = -s * L - o.x, vy = -o.y, l = Math.hypot(vx, vy) || 1;
@@ -1054,7 +1096,7 @@ function aiOutfield(p, dt) {
         return;
       }
       moveTo(p, o.x + o.vx * 0.3 - s * 0.6, o.y + o.vy * 0.3, 1.25);
-      if (G.protectT <= 0 && !(o.gk && o.gkHold > 0)) {
+      if (G.protectT <= 0 && !o.gk) {
         const ts = p.d.skills.map(k => SKILLS[k]).find(k => k.type === 'tackle' && T.gauge >= k.cost + 20);
         const pr = p.team === 1 ? DIFF[G.diff].skill : 0.7;
         if (ts && d < 6 && Math.random() < 0.3 * pr * dt) { useSkill(p, ts); return; }
@@ -1071,6 +1113,19 @@ function aiOutfield(p, dt) {
   const [tx, ty] = formationTarget(p);
   const d = Math.hypot(tx - p.x, ty - p.y);
   moveTo(p, tx, ty, d > 10 ? 1.15 : d > 3 ? 0.85 : 0.5);
+}
+
+// キーパーがボールを持っている間、相手（自分で操作している選手以外）は 10m 以上離れる
+function keepAwayFromKeeper() {
+  const o = G.ball.owner;
+  if (!o || !o.gk) return;
+  for (const p of G.teams[1 - o.team].players) {
+    if (p.gk || p.state !== 'run' || userControls(p)) continue;
+    const vx = p.x - o.x, vy = p.y - o.y, d = Math.hypot(vx, vy) || 0.01;
+    if (d >= 10) continue;
+    const sp = maxSpd(p, true);
+    p.dvx = vx / d * sp; p.dvy = vy / d * sp;
+  }
 }
 
 // ===== 操作 =====
@@ -1141,6 +1196,7 @@ function step(dt) {
     else aiOutfield(p, dt);
     if (G.phase !== 'play') return;
   }
+  keepAwayFromKeeper();
   movePlayers(dt);
   updateBall(dt);
   if (G.phase !== 'play') return;

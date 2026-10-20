@@ -148,3 +148,6 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
   .gbtn { font-size: 12px; }
 }
 #err { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 99; background: #a00; color: #fff; font-size: 11px; padding: 6px; white-space: pre-wrap; max-height: 40%; overflow: auto; }
+
+.card.ult { border-color: #ffd34d; background: linear-gradient(160deg, #6b4a00, #2a1500 80%); box-shadow: 0 0 14px #ffd34d; }
+.card.ult .cn { color: #ffe9a0; }

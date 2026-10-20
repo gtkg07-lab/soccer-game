@@ -450,6 +450,17 @@ const FX = {
         c.fill();
       }
     }
+    if (sp.sk.path === 'triple') {
+      // 左右に分身したボール（ゴールに近づくほど1つにまとまる）
+      const u = Math.min(1, sp.trav / sp.dist), spread = (1 - u) * 2.8;
+      for (const sg of [-1, 1]) {
+        const q = P(b.x - sp.uy * spread * sg, b.y + sp.ux * spread * sg, b.z + 0.11 + Math.sin(t * 20 + sg) * 0.3);
+        if (!q) continue;
+        const cg = c.createRadialGradient(q.x, q.y, 0, q.x, q.y, r * 7);
+        cg.addColorStop(0, '#ffffff'); cg.addColorStop(0.3, E.color); cg.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = cg; c.globalAlpha = 0.7; c.beginPath(); c.arc(q.x, q.y, r * 7, 0, 7); c.fill(); c.globalAlpha = 1;
+      }
+    }
     if (fx === 'wind') {
       c.strokeStyle = E.light; c.lineWidth = 2;
       for (let i = 0; i < 3; i++) {
@@ -613,6 +624,7 @@ function render() {
   drawHUD(c);
   if (G.freeze) {
     if (G.freeze.type === 'cutin') drawCutin(c, G.freeze);
+    else if (G.freeze.type === 'motion') drawMotion(c, G.freeze);
     else if (G.freeze.type === 'clash') drawClash(c, G.freeze);
   }
   if (G.flash > 0) {
@@ -796,7 +808,8 @@ function drawCutin(c, f) {
   const off = (1 - easeOut(inT)) * W0 * 1.3 - easeIn(out) * W0 * 1.3;
   c.translate(off, 0);
   const g = c.createLinearGradient(0, 0, W0, 0);
-  g.addColorStop(0, E.dark); g.addColorStop(0.45, E.color); g.addColorStop(1, E.dark);
+  if (f.sk.ultimate) { g.addColorStop(0, '#4a2a00'); g.addColorStop(0.3, '#ffd34d'); g.addColorStop(0.5, '#fff6c8'); g.addColorStop(0.7, E.color); g.addColorStop(1, '#4a2a00'); }
+  else { g.addColorStop(0, E.dark); g.addColorStop(0.45, E.color); g.addColorStop(1, E.dark); }
   c.fillStyle = g;
   c.beginPath(); c.moveTo(-60, by + bh * 0.14); c.lineTo(W0 + 60, by - bh * 0.1); c.lineTo(W0 + 60, by + bh * 0.88); c.lineTo(-60, by + bh * 1.1); c.closePath(); c.fill();
   c.strokeStyle = E.light; c.lineWidth = 4;
@@ -831,7 +844,8 @@ function drawCutin(c, f) {
   c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.7)';
   const who = `${T.short}  ${f.p.d.n}  ${f.p.d.name}` + (f.partner ? ` ＆ ${f.partner.d.name}` : '');
   c.strokeText(who, W0 * 0.6, by + bh * 0.16); c.fillText(who, W0 * 0.6, by + bh * 0.16);
-  const info = `${E.name}属性 ・ ${f.sk.combo ? '合体' : ''}${SKILL_TYPE_NAME[f.sk.type]}技` + (f.sk.power ? ` ・ 威力 ${f.sk.power}` : '');
+  const info = f.sk.ultimate ? '覚醒技 ・ ゲージ100消費 ・ 敵全員ノックバック'
+    : `${E.name}属性 ・ ${f.sk.combo ? '合体' : ''}${SKILL_TYPE_NAME[f.sk.type]}技` + (f.sk.power ? ` ・ 威力 ${f.sk.power}` : '');
   c.strokeText(info, W0 * 0.6, by + bh * 0.82); c.fillText(info, W0 * 0.6, by + bh * 0.82);
   c.restore();
 }
@@ -891,4 +905,161 @@ function drawClash(c, f) {
     c.strokeText(txt, W0 / 2, H0 * 0.82); c.fillStyle = f.win ? E1.light : E2.light; c.fillText(txt, W0 / 2, H0 * 0.82);
   }
   c.restore();
+}
+
+// ===== 必殺モーション（カットインのあとに挟むワンカット） =====
+function drawMotion(c, f) {
+  const W0 = R.W, H0 = R.H, t = f.t, u = Math.min(1, t / f.dur), sk = f.sk, E = ELEM[sk.elem], fx = sk.fx;
+  const fade = Math.min(1, t / 0.1) * (u > 0.92 ? (1 - u) / 0.08 : 1);
+  const gy = H0 * 0.86, s = H0 * 0.27;
+  let seed = 9173 + Math.floor(t * 30) * 31;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  c.save();
+  c.globalAlpha = fade;
+  // 背景
+  const bg = c.createRadialGradient(W0 / 2, H0 * 0.55, 0, W0 / 2, H0 * 0.55, W0 * 0.75);
+  bg.addColorStop(0, sk.ultimate ? '#fff1a8' : E.color); bg.addColorStop(0.35, E.dark); bg.addColorStop(1, '#000');
+  c.fillStyle = bg; c.fillRect(0, 0, W0, H0);
+  c.globalCompositeOperation = 'lighter';
+  c.save(); c.translate(W0 / 2, H0 * 0.55);
+  for (let i = 0; i < 18; i++) {
+    const a = i / 18 * Math.PI * 2 + t * 1.6;
+    c.fillStyle = i % 2 ? E.color + '22' : E.light + '18';
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.cos(a - 0.08) * W0, Math.sin(a - 0.08) * W0); c.lineTo(Math.cos(a + 0.08) * W0, Math.sin(a + 0.08) * W0); c.fill();
+  }
+  c.restore();
+  const eg = c.createRadialGradient(W0 / 2, gy, 0, W0 / 2, gy, W0 * 0.35);
+  eg.addColorStop(0, E.light + '88'); eg.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = eg; c.beginPath(); c.ellipse(W0 / 2, gy, W0 * 0.35, H0 * 0.07, 0, 0, 7); c.fill();
+  // 属性ごとの演出
+  motionFx(c, fx, E, t, W0, H0, gy, rnd);
+  c.globalCompositeOperation = 'source-over';
+  const look = lookOf(f.p), look2 = f.partner ? lookOf(f.partner) : null;
+  const type = sk.type;
+  if (type === 'shoot') {
+    // 跳ぶ → 空中で回転 → 蹴り込む
+    const a = Math.min(1, u / 0.4), spinU = clamp((u - 0.4) / 0.3, 0, 1), kU = clamp((u - 0.7) / 0.3, 0, 1);
+    const lift = easeOut(a) * H0 * 0.2 - kU * H0 * 0.06;
+    const figs = f.partner ? [[W0 * 0.38, look], [W0 * 0.62, look2]] : [[W0 * 0.45, look]];
+    for (const [fxp, lk] of figs) {
+      const py = gy - lift;
+      c.save(); c.translate(fxp, py - s);
+      c.rotate(spinU * Math.PI * 2 * (fxp < W0 / 2 ? 1 : -1));
+      drawFigure(c, 0, s, s, lk, { run: 0, moving: false, flip: fxp < W0 / 2 || !f.partner ? 1 : -1, kick: kU > 0 ? kU : 0, arms: kU > 0 ? null : 'up' });
+      c.restore();
+    }
+    // ボール
+    const ballX0 = f.partner ? W0 / 2 : W0 * 0.45 + s * 0.45, ballY0 = gy - lift - s * (kU > 0 ? 0.35 : 2.05);
+    const bx = ballX0 + easeIn(kU) * W0 * 0.9, by = ballY0 + kU * H0 * 0.1;
+    const br = s * (0.12 + 0.1 * a);
+    c.globalCompositeOperation = 'lighter';
+    if (kU > 0) {
+      c.strokeStyle = E.color; c.lineWidth = br * 3; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(ballX0, ballY0); c.lineTo(bx, by); c.stroke();
+    }
+    const ag = c.createRadialGradient(bx, by, 0, bx, by, br * (4 + 2 * Math.sin(t * 30)));
+    ag.addColorStop(0, '#fff'); ag.addColorStop(0.3, E.light); ag.addColorStop(0.6, E.color); ag.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = ag; c.beginPath(); c.arc(bx, by, br * 6, 0, 7); c.fill();
+    if (fx === 'phoenix' && kU === 0) motionWings(c, bx, by, s * 1.4, t);
+    c.globalCompositeOperation = 'source-over';
+    c.fillStyle = fx === 'meteor' ? '#3a2412' : '#fff';
+    c.beginPath(); c.arc(bx, by, fx === 'meteor' ? br * 2 : br, 0, 7); c.fill();
+    if (u > 0.88) { c.fillStyle = `rgba(255,255,255,${(u - 0.88) / 0.12})`; c.fillRect(0, 0, W0, H0); }
+  } else if (type === 'dribble') {
+    // 残像を残してジグザグに駆け抜ける
+    const posAt = v => [W0 * (0.1 + 0.8 * v), gy - H0 * 0.04 + Math.sin(v * Math.PI * 4) * H0 * 0.07];
+    c.globalCompositeOperation = 'lighter';
+    for (let i = 5; i >= 1; i--) {
+      const v = Math.max(0, u - i * 0.05), [x, y] = posAt(v);
+      drawFigure(c, x, y, s * 0.9, look, { run: v * 40, moving: true, flip: 1, tint: E.color, alpha: 0.5 - i * 0.08 });
+    }
+    c.globalCompositeOperation = 'source-over';
+    const [x, y] = posAt(u);
+    drawFigure(c, x, y, s * 0.9, look, { run: u * 40, moving: true, flip: 1 });
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(x + s * 0.4, y - s * 0.08, s * 0.1, 0, 7); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.5)'; c.lineWidth = 2;
+    for (let i = 0; i < 14; i++) { const ly = H0 * (0.15 + rnd() * 0.75), lx = rnd() * W0; c.beginPath(); c.moveTo(lx, ly); c.lineTo(lx - W0 * 0.2, ly); c.stroke(); }
+    if (sk.ultimate && u > 0.55) {
+      c.globalCompositeOperation = 'lighter';
+      const k = (u - 0.55) / 0.45;
+      for (let i = 0; i < 3; i++) {
+        c.strokeStyle = i ? E.color : '#fff6c8'; c.lineWidth = 10 * (1 - k) + 2;
+        c.beginPath(); c.ellipse(x, y - s * 0.5, W0 * (0.1 + k * 0.6 + i * 0.08), H0 * (0.05 + k * 0.3 + i * 0.04), 0, 0, 7); c.stroke();
+      }
+    }
+  } else if (type === 'tackle') {
+    // 滑り込み
+    const k = easeOut(Math.min(1, u / 0.7));
+    const x = W0 * (0.88 - 0.62 * k);
+    drawFigure(c, x, gy, s, look, { run: 0, moving: false, flip: -1, rot: 0.95, kick: 0.5 });
+    if (u > 0.6) {
+      c.globalCompositeOperation = 'lighter';
+      const fl = 1 - (u - 0.6) / 0.4;
+      const ig = c.createRadialGradient(W0 * 0.24, gy - s * 0.3, 0, W0 * 0.24, gy - s * 0.3, s * 2);
+      ig.addColorStop(0, `rgba(255,255,255,${fl})`); ig.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = ig; c.fillRect(0, 0, W0, H0);
+    }
+  } else {
+    // ブロック・キーパー：腕を上げてバリアを張る
+    const k = easeOut(Math.min(1, u * 1.6));
+    const cx = W0 / 2, cy = gy - s * 1.0, R0 = s * 1.7 * k;
+    c.globalCompositeOperation = 'lighter';
+    c.fillStyle = E.color + '55'; c.strokeStyle = E.light; c.lineWidth = 4;
+    c.beginPath();
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + Math.PI / 6 + t; const px = cx + Math.cos(a) * R0 * (f.partner ? 1.5 : 1), py = cy + Math.sin(a) * R0; i ? c.lineTo(px, py) : c.moveTo(px, py); }
+    c.closePath(); c.fill(); c.stroke();
+    for (let i = 0; i < 24; i++) {
+      const a = rnd() * Math.PI * 2, r = s * (2.5 - u * 2) * (0.6 + rnd() * 0.6);
+      c.fillStyle = E.light; c.beginPath(); c.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 3, 0, 7); c.fill();
+    }
+    c.globalCompositeOperation = 'source-over';
+    if (f.partner) {
+      drawFigure(c, W0 * 0.4, gy, s, look, { run: 0, moving: false, flip: 1, arms: 'up' });
+      drawFigure(c, W0 * 0.6, gy, s, look2, { run: 0, moving: false, flip: -1, arms: 'up' });
+    } else drawFigure(c, cx, gy, s, look, { run: 0, moving: false, flip: 1, arms: 'up' });
+  }
+  c.restore();
+}
+function motionWings(c, x, y, size, t) {
+  const flap = Math.sin(t * 14) * 0.4;
+  for (const sd of [-1, 1]) {
+    const wg = c.createLinearGradient(x, y, x + sd * size * 2.4, y - size);
+    wg.addColorStop(0, '#fff3b0'); wg.addColorStop(0.5, '#ff7a1a'); wg.addColorStop(1, 'rgba(255,40,0,0)');
+    c.fillStyle = wg;
+    c.beginPath(); c.moveTo(x, y);
+    c.quadraticCurveTo(x + sd * size * 1.2, y - size * (1.6 + flap), x + sd * size * 2.6, y - size * (0.8 + flap));
+    c.quadraticCurveTo(x + sd * size * 1.4, y - size * 0.3, x + sd * size * 0.2, y + size * 0.2);
+    c.fill();
+  }
+}
+function motionFx(c, fx, E, t, W0, H0, gy, rnd) {
+  if (fx === 'fire' || fx === 'phoenix' || fx === 'meteor') {
+    for (let i = 0; i < 40; i++) {
+      const x = W0 * (0.15 + rnd() * 0.7), life = (t * 1.8 + rnd()) % 1, y = gy - life * H0 * 0.8, r = (1 - life) * H0 * 0.05 + 2;
+      c.fillStyle = life < 0.3 ? '#fff3b0' : life < 0.6 ? E.light : E.color;
+      c.globalAlpha = (1 - life) * 0.8; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+  } else if (fx === 'wind') {
+    c.strokeStyle = E.light; c.lineWidth = 3;
+    for (let i = 0; i < 5; i++) {
+      c.globalAlpha = 0.5; c.beginPath();
+      c.ellipse(W0 / 2, gy - H0 * (0.1 + i * 0.13), W0 * (0.12 + i * 0.05), H0 * 0.04, 0, t * 6 + i, t * 6 + i + 4); c.stroke();
+    }
+  } else if (fx === 'thunder') {
+    const k = Math.floor(t * 9);
+    for (let j = 0; j < 2; j++) {
+      let x = W0 * (0.2 + ((k * 37 + j * 53) % 60) / 100), y = 0;
+      c.strokeStyle = '#fff'; c.lineWidth = 4; c.globalAlpha = 0.9; c.beginPath(); c.moveTo(x, y);
+      while (y < gy) { y += H0 * 0.08; x += (rnd() - 0.5) * 50; c.lineTo(x, y); }
+      c.stroke(); c.strokeStyle = E.color; c.lineWidth = 12; c.globalAlpha = 0.35; c.stroke();
+    }
+  } else if (fx === 'earth') {
+    c.globalCompositeOperation = 'source-over';
+    for (let i = 0; i < 26; i++) {
+      const x = W0 * (0.1 + rnd() * 0.8), life = (t * 1.3 + rnd()) % 1, y = gy - life * H0 * 0.7, r = H0 * (0.015 + rnd() * 0.03);
+      c.globalAlpha = 1 - life; c.fillStyle = i % 2 ? '#7a4d22' : '#b07a3d'; c.fillRect(x - r, y - r, r * 2, r * 1.6);
+    }
+    c.globalCompositeOperation = 'lighter';
+  }
+  c.globalAlpha = 1;
 }
