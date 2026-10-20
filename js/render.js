@@ -831,7 +831,7 @@ function drawCutin(c, f) {
   c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.7)';
   const who = `${T.short}  ${f.p.d.n}  ${f.p.d.name}` + (f.partner ? ` ＆ ${f.partner.d.name}` : '');
   c.strokeText(who, W0 * 0.6, by + bh * 0.16); c.fillText(who, W0 * 0.6, by + bh * 0.16);
-  const info = `${E.name}属性 ・ ${SKILL_TYPE_NAME[f.sk.type]}技` + (f.sk.power ? ` ・ 威力 ${f.sk.power}` : '');
+  const info = `${E.name}属性 ・ ${f.sk.combo ? '合体' : ''}${SKILL_TYPE_NAME[f.sk.type]}技` + (f.sk.power ? ` ・ 威力 ${f.sk.power}` : '');
   c.strokeText(info, W0 * 0.6, by + bh * 0.82); c.fillText(info, W0 * 0.6, by + bh * 0.82);
   c.restore();
 }

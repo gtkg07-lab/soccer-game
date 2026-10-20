@@ -39,6 +39,9 @@ const SKILLS = {
   atlas:      { name: 'アトラスシールド',     type: 'keeper',  elem: 'earth',   power: 95, cost: 35, fx: 'earth' },
   vortex:     { name: 'ボルテックスキャッチ', type: 'keeper',  elem: 'wind',    power: 88, cost: 30, fx: 'wind' },
   abyss:      { name: 'アビスハンド',         type: 'keeper',  elem: 'thunder', power: 92, cost: 35, fx: 'thunder' },
+  // 合体キーパー技（GK と相方の DF が近くにいるときだけ）
+  twinwall:   { name: 'ツインギガウォール',   type: 'keeper',  elem: 'earth',   power: 122, cost: 55, fx: 'earth', combo: true },
+  abyssgate:  { name: 'アビスゲート',         type: 'keeper',  elem: 'thunder', power: 118, cost: 55, fx: 'thunder', combo: true },
 };
 const SKILL_TYPE_NAME = { shoot: 'シュート', dribble: 'ドリブル', tackle: 'タックル', block: 'ブロック', keeper: 'キーパー' };
 
@@ -58,7 +61,7 @@ const TEAMS = [
     shirt: '#1d5cff', accent: '#ffffff', shorts: '#ffffff', socks: '#1d5cff',
     gkShirt: '#19c37d', hair: '#2a1a10',
     players: [
-      { n: 1,  name: '守山 剛',   pos: 'GK', spd: 1.0,  shot: 1.0,  skills: ['atlas', 'vortex'] },
+      { n: 1,  name: '守山 剛',   pos: 'GK', spd: 1.0,  shot: 1.0,  skills: ['atlas', 'vortex', 'twinwall'], partner: 2 },
       { n: 2,  name: '岩城 大地', pos: 'DF', spd: 0.97, shot: 0.95, skills: ['pillar'] },
       { n: 3,  name: '雷堂 翔',   pos: 'DF', spd: 1.0,  shot: 0.95, skills: ['spark'] },
       { n: 4,  name: '石田 守',   pos: 'DF', spd: 0.96, shot: 0.95, skills: ['pillar', 'quake'] },
@@ -76,7 +79,7 @@ const TEAMS = [
     shirt: '#2b0f45', accent: '#c04dff', shorts: '#14081f', socks: '#c04dff',
     gkShirt: '#ff8a1d', hair: '#d8d8e8',
     players: [
-      { n: 1,  name: '冥王 ゴルド', pos: 'GK', spd: 1.0,  shot: 1.0,  skills: ['abyss'] },
+      { n: 1,  name: '冥王 ゴルド', pos: 'GK', spd: 1.0,  shot: 1.0,  skills: ['abyss', 'abyssgate'], partner: 4 },
       { n: 2,  name: '鉄 ガイ',     pos: 'DF', spd: 0.97, shot: 0.95, skills: ['thundernet'] },
       { n: 3,  name: '影山 獄',     pos: 'DF', spd: 1.0,  shot: 0.95, skills: ['quake'] },
       { n: 4,  name: '黒鋼 ザン',   pos: 'DF', spd: 0.96, shot: 0.95, skills: ['thundernet', 'quake'] },

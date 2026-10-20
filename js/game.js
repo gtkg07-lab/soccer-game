@@ -59,7 +59,7 @@ function setupKickoff(ti) {
   giveBall(k, true);
   k.waitT = 0.3;
   G.pass = null; G.shotPlan = null; G.protectT = 0; G.possTeam = ti;
-  G.phase = 'kickoff'; G.phaseT = 0;
+  G.phase = 'kickoff'; G.phaseT = 0; G.cam.zoom = 1; G.timeScale = 1;
   G.ctrl = ti === 0 ? k : G.teams[0].players[9];
   Input.actions.length = 0;
   banner(G.half === 1 ? 'KICK OFF' : '後半 KICK OFF', null, '#ffe14d', 1.3);
@@ -73,6 +73,7 @@ function giveBall(p, quiet) {
     if (prev === p.team && G.pass && G.pass.team === p.team) addGauge(T, 3);
     else if (prev != null && prev !== p.team) addGauge(T, 5);
   }
+  for (const q of G.players) q.mustPass = false;
   b.owner = p; b.special = null; b.lastTouch = p.team; G.lastToucher = p; b.trail.length = 0;
   if (p.gk) snapKeeperBall(p);
   G.pass = null; G.shotPlan = null; G.possTeam = p.team;
@@ -310,14 +311,12 @@ function planSave(p, gx, ty, tz, Tt, spd) {
 function keeperVsShot(plan) {
   const K = plan.K, T = teamOf(K);
   const opts = K.d.skills.map(k => SKILLS[k]).filter(k => k.type === 'keeper');
-  const afford = opts.filter(k => T.gauge >= k.cost);
+  const afford = opts.filter(k => keeperSkillState(K, k).ok).sort((a, c) => a.cost - c.cost);
   if (!afford.length || K.state === 'down') return;
   const use = sk => {
-    if (!sk || G.shotPlan !== plan || T.gauge < sk.cost) return;
-    addGauge(T, -sk.cost);
+    if (!sk || G.shotPlan !== plan || !keeperSkillState(K, sk).ok) return;
     plan.saved = true; plan.catchIt = true; plan.ksk = sk;
-    startFreeze({ type: 'cutin', dur: 1.1, p: K, sk, onEnd: () => FX.shield(K.x, K.y, 0, sk.elem, 1.6, 'keeper') });
-    Sfx.cutin();
+    castKeeperSkill(K, sk);
   };
   if (K.team === 0 && !G.auto) { UI.keeperMenu(K, opts, use, 'シュートが来た！ キーパー技は？'); return; }
   // CPU・AUTO は決まりそうなシュートのときだけ使う
@@ -465,13 +464,35 @@ function applyBlock(s, q, sk) {
     s.spd *= 0.9;
   }
 }
+// キーパー技が今使えるか（合体技は相方の DF が近くにいるときだけ）
+function keeperSkillState(K, sk) {
+  if (teamOf(K).gauge < sk.cost) return { ok: false, why: 'ゲージ不足' };
+  if (sk.combo && !comboPartner(K)) return { ok: false, why: '相方が遠い' };
+  return { ok: true, why: '' };
+}
+// キーパー技の発動（カットイン → バリア）。合体技なら相方がキーパーの横に飛んでくる
+function castKeeperSkill(K, sk, onEnd) {
+  addGauge(teamOf(K), -sk.cost);
+  const partner = sk.combo ? comboPartner(K) : null;
+  if (partner) {
+    FX.ghost(partner, ELEM[sk.elem].color);
+    partner.x = K.x + teamOf(K).side * 0.9; partner.y = clamp(K.y + (K.y > 0 ? -1.3 : 1.3), -4, 4);
+    partner.vx = partner.vy = 0; partner.state = 'run'; partner.vz = 4;
+  }
+  startFreeze({ type: 'cutin', dur: partner ? 1.5 : 1.15, p: K, sk, partner, onEnd: () => {
+    FX.shield(K.x, K.y, 0, sk.elem, 2.6, 'keeper');
+    if (partner) { FX.shield(partner.x, partner.y, 0, sk.elem, 2.6, 'keeper'); FX.burst(K.x, K.y, 1, sk.fx, 40); }
+    if (onEnd) onEnd();
+  } });
+  Sfx.cutin();
+}
 function decideKeeper(s) {
   const K = s.K, T = teamOf(K);
   const opts = K.d.skills.map(k => SKILLS[k]).filter(k => k.type === 'keeper');
-  const afford = opts.filter(k => T.gauge >= k.cost);
+  const afford = opts.filter(k => keeperSkillState(K, k).ok);
   if (!afford.length) return;
   if (K.team === 0 && !G.auto) {
-    UI.keeperMenu(K, opts, sk => { if (sk && T.gauge >= sk.cost && G.ball.special === s) useKeeperSkill(s, K, sk); });
+    UI.keeperMenu(K, opts, sk => { if (sk && keeperSkillState(K, sk).ok && G.ball.special === s) useKeeperSkill(s, K, sk); });
     return;
   }
   afford.sort((a, c) => c.power * elemBonus(c.elem, s.sk.elem) - a.power * elemBonus(a.elem, s.sk.elem));
@@ -479,10 +500,8 @@ function decideKeeper(s) {
   if (Math.random() < pr) useKeeperSkill(s, K, afford[0]);
 }
 function useKeeperSkill(s, K, sk) {
-  addGauge(teamOf(K), -sk.cost);
   s.ksk = sk;
-  startFreeze({ type: 'cutin', dur: 1.15, p: K, sk, onEnd: () => FX.shield(K.x, K.y, 0, sk.elem, 2.6, 'keeper') });
-  Sfx.cutin();
+  castKeeperSkill(K, sk);
 }
 function startClash(s) {
   const K = s.K, ksk = s.ksk, b = G.ball;
@@ -705,7 +724,8 @@ function updateBall(dt) {
     const K = plan.K;
     if ((prevX - K.x) * (b.x - K.x) <= 0) {
       G.shotPlan = null;
-      if (plan.saved && K.state !== 'down') {
+      if (plan.saved && (K.state !== 'down' || plan.ksk)) {
+        if (plan.ksk) { K.state = 'run'; K.st = 0; }
         K.y = clamp(b.y - Math.sign(b.y - K.y) * 0.3, -4, 4);
         if (plan.ksk) {
           giveBall(K); K.gkHold = 1.4;

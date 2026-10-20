@@ -77,7 +77,7 @@ const UI = {
   },
   keeperMenu(K, opts, cb, title) {
     const T = teamOf(K);
-    const items = opts.map(sk => ({ sk, ok: T.gauge >= sk.cost, why: 'ゲージ不足' }));
+    const items = opts.map(sk => Object.assign({ sk }, keeperSkillState(K, sk)));
     items.push({ plain: true, label: 'ふつうに止める', ok: true });
     this.buildMenu(title || '必殺シュートが来た！ キーパー技は？', items, cb, cb, 0.03, 3.5);
   },
@@ -297,6 +297,25 @@ function setupScreens() {
   $('btnAgain').addEventListener('click', () => UI.startMatch());
   $('btnResTitle').addEventListener('click', () => UI.toTitle());
   document.addEventListener('contextmenu', e => e.preventDefault());
+  // iPhone のピンチ・ダブルタップで画面が拡大されないようにする
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend', 'dblclick']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchstart', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastEnd = 0;
+  document.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastEnd < 350 && !e.target.closest('.tbox button, .seg button')) e.preventDefault();
+    lastEnd = now;
+  }, { passive: false });
+  document.addEventListener('touchmove', e => { if (!e.target.closest('.tbox')) e.preventDefault(); }, { passive: false });
+  // それでも拡大されたら元に戻す
+  setInterval(() => {
+    const vv = window.visualViewport;
+    if (vv && vv.scale > 1.01) {
+      const m = document.querySelector('meta[name=viewport]'), c = m.content;
+      m.content = c + ',maximum-scale=1'; setTimeout(() => { m.content = c; }, 300);
+      window.scrollTo(0, 0);
+    }
+  }, 700);
   document.addEventListener('visibilitychange', () => { if (document.hidden && !G.demo && !G.paused && G.phase !== 'fulltime') togglePause(); });
 }
 
@@ -341,6 +360,7 @@ addEventListener('DOMContentLoaded', () => {
       update(1 / 60);
       if (until && G.freeze && G.freeze.type === until && G.freeze.t > +(q.get('ft') || 0.5)) break;
       if (until === 'goal' && G.phase === 'goal' && G.phaseT > 0.8) break;
+      if (until === 'kcombo' && G.freeze && G.freeze.sk && G.freeze.sk.type === 'keeper' && G.freeze.sk.combo && G.freeze.t > 0.7) break;
       if (until === 'dash' && G.players.some(p => p.state === 'dash' && !p.dashTarget && p.dashT > +(q.get('dt') || 0.4))) break;
       if (until === 'special' && G.ball.special && G.ball.special.trav > +(q.get('tr') || 8) && !G.freeze) break;
     }
