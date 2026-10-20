@@ -369,7 +369,7 @@ function useSkill(p, sk) {
     if (b.owner !== p) return false;
     if (sk.ultimate && T.gauge < 100) return false;
     addGauge(T, -sk.cost);
-    startFreeze({ type: 'cutin', dur: sk.ultimate ? 1.2 : 0.95, p, sk, onEnd: () => { if (sk.ultimate) knockbackAll(p, sk); startDash(p, sk); } });
+    startFreeze({ type: 'cutin', dur: sk.ultimate ? 1.2 : 0.95, p, sk, onEnd: () => { if (sk.ultimate) { knockbackAll(p, sk); startDash(p, sk); } else dribbleDuel(p, sk); } });
   } else if (sk.type === 'tackle') {
     const o = b.owner;
     if (!o || o.team === p.team || dist(o, p) > 8 || o.mustPass || o.gk) return false;
@@ -559,6 +559,61 @@ function knockbackAll(p, sk) {
   G.shake = 1.0; G.flash = 0.8; G.flashColor = E.light;
   banner('覚醒！', '敵が全員ふっとんだ！', E.light, 1.1);
   Sfx.boom();
+}
+// ===== 必殺ドリブル vs ディフェンス技 =====
+// 近く（9m以内）の守備側の選手は、タックル技・ブロック技で迎え撃てる（覚醒ドリブルは止められない）
+const defSkills = q => q.d.skills.map(k => SKILLS[k]).filter(k => k.type === 'tackle' || k.type === 'block');
+const defPower = sk => sk.type === 'block' ? sk.power * 2 + 8 : (sk.power || 78);
+function dribbleDuel(p, sk) {
+  const b = G.ball;
+  if (b.owner !== p) return;
+  const q = G.teams[1 - p.team].players
+    .filter(q => !q.gk && q.state === 'run' && dist(q, p) < 9 && defSkills(q).length)
+    .sort((a, c) => dist(a, p) - dist(c, p))[0];
+  if (!q) { startDash(p, sk); return; }
+  const T = teamOf(q), opts = defSkills(q), afford = opts.filter(k => T.gauge >= k.cost);
+  if (!afford.length) { startDash(p, sk); return; }
+  G.protectT = Math.max(G.protectT, 0.3);
+  const go = dsk => {
+    if (!dsk || T.gauge < dsk.cost || b.owner !== p || q.state !== 'run') { startDash(p, sk); return; }
+    addGauge(T, -dsk.cost);
+    // 守る選手がドリブルの進路に立ちはだかる
+    const gx = teamOf(p).side * L, dx = gx - p.x, dy = -p.y * 0.3, l = Math.hypot(dx, dy) || 1;
+    FX.ghost(q, ELEM[dsk.elem].color);
+    q.x = p.x + dx / l * 2.4; q.y = p.y + dy / l * 2.4; q.vx = q.vy = 0;
+    q.fx = -dx / l; q.fy = -dy / l; p.fx = dx / l; p.fy = dy / l;
+    startFreeze({ type: 'cutin', dur: 1.0, p: q, sk: dsk, onEnd: () => dribbleClash(p, sk, q, dsk) });
+    Sfx.cutin();
+  };
+  if (q.team === 0 && !G.auto) { UI.defenseMenu(q, opts, go); return; }
+  const pr = q.team === 1 ? DIFF[G.diff].skill * 0.8 : 0.6;
+  if (Math.random() < pr) {
+    afford.sort((a, c) => defPower(c) * elemBonus(c.elem, sk.elem) - defPower(a) * elemBonus(a.elem, sk.elem));
+    go(afford[0]);
+  } else startDash(p, sk);
+}
+function dribbleClash(p, sk, q, dsk) {
+  let ap = (sk.power || 80) * elemBonus(sk.elem, dsk.elem), dp = defPower(dsk) * elemBonus(dsk.elem, sk.elem);
+  ap *= rnd(0.92, 1.08); dp *= rnd(0.92, 1.08);
+  const win = ap > dp;
+  G.shake = 0.7; Sfx.clash();
+  startFreeze({ type: 'clash', dur: 2.0, s: { sk }, ksk: dsk, sp: Math.round(ap), kp: Math.round(dp), win,
+    winText: '突破！！', loseText: '奪った！！', onEnd: () => {
+      const b = G.ball;
+      if (win) {
+        q.state = 'down'; q.st = 1.4; q.vx = p.fx * 7; q.vy = p.fy * 7;
+        FX.burst(q.x, q.y, 1, sk.fx, 40);
+        if (b.owner === p) startDash(p, sk);
+      } else {
+        if (b.owner === p) giveBall(q);
+        p.state = 'down'; p.st = 1.4; p.vx = -p.fx * 6; p.vy = -p.fy * 6;
+        FX.burst(p.x, p.y, 1, dsk.fx, 50);
+        if (dsk.type === 'block') FX.shield(q.x, q.y, 0, dsk.elem, 1.0, dsk.elem === 'earth' ? 'pillar' : 'block');
+        banner('ディフェンス成功！', `${q.d.name}の${dsk.name}`, ELEM[dsk.elem].light, 1.3);
+        addGauge(teamOf(q), 6);
+        Sfx.boom();
+      }
+    } });
 }
 function startDash(p, sk) {
   let dx, dy;

@@ -220,76 +220,171 @@ function lookOf(p) {
   return { shirt: p.gk ? T.gkShirt : T.shirt, accent: T.accent, shorts: T.shorts, socks: p.gk ? T.gkShirt : T.socks,
     hair: T.hair, skin: p.d.n % 3 === 0 ? '#c98d5f' : '#f0c7a0', num: p.d.n };
 }
-// 足元 (x,y) に高さ s(px/m) の人型を描く
+// 色を明るく(+)／暗く(-)する
+const _shadeCache = new Map();
+function shade(hex, amt) {
+  const key = hex + amt;
+  let v = _shadeCache.get(key); if (v) return v;
+  let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  if (amt > 0) { r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt; }
+  else { r *= 1 + amt; g *= 1 + amt; b *= 1 + amt; }
+  v = `rgb(${r | 0},${g | 0},${b | 0})`; _shadeCache.set(key, v); return v;
+}
+// 足元 (x,y) に高さ s(px/m) の人型を描く。光と影で立体的に見せる（光は画面の左上から）
+// pose: run / moving / flip / side(横向き度 0〜1) / fy(奥行き方向の向き) / kick / rot / arms('up'|'fwd') / tint / alpha
 function drawFigure(c, x, y, s, look, pose) {
   c.save(); c.translate(x, y);
   if (pose.rot) c.rotate(pose.rot);
-  if (pose.flip < 0) c.scale(-1, 1);
+  const fl = pose.flip < 0 ? -1 : 1;
+  if (fl < 0) c.scale(-1, 1);
   if (pose.alpha != null) c.globalAlpha = pose.alpha;
-  const tint = pose.tint;
-  const col = v => tint || v;
-  const amp = pose.moving ? 0.32 * (pose.side == null ? 1 : 0.35 + 0.65 * pose.side) : 0;
-  const sw = Math.sin(pose.run || 0) * amp;
-  const bob = pose.moving ? -Math.abs(Math.sin(pose.run || 0)) * 0.05 * s : 0;
-  c.translate(0, bob);
-  c.lineCap = 'round';
-  const hipY = -0.9 * s, shY = -1.42 * s;
-  const leg = (hx, fx, fy, front) => {
-    const kx = (hx + fx) / 2 + 0.07 * s, ky = (hipY + fy) / 2;
-    c.strokeStyle = col(look.skin); c.lineWidth = 0.13 * s;
-    c.beginPath(); c.moveTo(hx, hipY); c.lineTo(kx, ky); c.stroke();
-    c.strokeStyle = col(look.socks); c.lineWidth = 0.12 * s;
-    c.beginPath(); c.moveTo(kx, ky); c.lineTo(fx, fy); c.stroke();
-    c.fillStyle = col('#151515');
-    c.beginPath(); c.ellipse(fx + 0.06 * s, fy - 0.02 * s, 0.12 * s, 0.06 * s, 0, 0, 7); c.fill();
+  const tint = pose.tint, flat = !!tint || s < 9;
+  const lx = -fl;                                        // ローカル座標での光の来る向き
+  const side = clamp(pose.side == null ? 1 : pose.side, 0, 1);
+  const wf = clamp(1 - side * 1.15, 0, 1);               // 正面・背面向きの度合い
+  const view = wf > 0.45 ? ((pose.fy || 0) < 0 ? 'front' : 'back') : 'side';
+  const run = pose.run || 0, mv = pose.moving ? 1 : 0;
+  const sn = Math.sin(run);
+  const sw = sn * 0.3 * mv * (0.2 + 0.8 * side);
+  c.translate(0, -Math.abs(sn) * 0.045 * s * mv);
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  const hipY = -0.92 * s, shY = -1.42 * s;
+  const hw = s * (0.155 + 0.08 * wf), hipX = s * (0.035 + 0.06 * wf);
+  const outline = 'rgba(10,10,20,0.5)', ow = Math.max(0.6, s * 0.02);
+  // 円柱っぽい手足（輪郭 → 光の当たる側が明るいグラデーション）
+  const seg = (x1, y1, x2, y2, w, col) => {
+    c.strokeStyle = flat ? outline : outline; c.lineWidth = w * 2 + ow * 2;
+    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    if (flat) c.strokeStyle = tint || col;
+    else {
+      const dx = x2 - x1, dy = y2 - y1, l = Math.hypot(dx, dy) || 1;
+      let nx = -dy / l, ny = dx / l;
+      if (nx * lx * 0.6 - ny * 0.8 < 0) { nx = -nx; ny = -ny; }
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      const g = c.createLinearGradient(mx + nx * w, my + ny * w, mx - nx * w, my - ny * w);
+      g.addColorStop(0, shade(col, 0.35)); g.addColorStop(0.45, col); g.addColorStop(1, shade(col, -0.45));
+      c.strokeStyle = g;
+    }
+    c.lineWidth = w * 2;
+    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
   };
-  const arm = (hx, hy) => {
-    c.strokeStyle = col(look.shirt); c.lineWidth = 0.1 * s;
-    c.beginPath(); c.moveTo(0, shY + 0.05 * s); c.lineTo((hx) * 0.5, (shY + hy) / 2); c.stroke();
-    c.strokeStyle = col(look.skin); c.lineWidth = 0.085 * s;
-    c.beginPath(); c.moveTo(hx * 0.5, (shY + hy) / 2); c.lineTo(hx, hy); c.stroke();
+  const horiz = (col, x0, x1) => {
+    if (flat) return tint || col;
+    const g = c.createLinearGradient(lx < 0 ? x0 : x1, 0, lx < 0 ? x1 : x0, 0);
+    g.addColorStop(0, shade(col, 0.3)); g.addColorStop(0.5, col); g.addColorStop(1, shade(col, -0.45));
+    return g;
   };
-  const armsUp = pose.arms === 'up', armsFwd = pose.arms === 'fwd';
-  // 奥の腕・脚
-  if (armsUp) arm(-0.3 * s, -2.0 * s); else if (armsFwd) arm(0.5 * s, -1.6 * s); else arm(-sw * 0.9 * s, -0.98 * s);
-  leg(-0.04 * s, -sw * s, 0, false);
-  // 胴体
-  c.fillStyle = col(look.shorts);
-  c.fillRect(-0.17 * s, -1.02 * s, 0.34 * s, 0.24 * s);
-  c.fillStyle = col(look.shirt);
+  const leg = (i) => {
+    const front = i > 0;
+    const hx = i * hipX;
+    let fx = i * hipX * 1.05 * wf + (front ? sw : -sw) * s;
+    let fy = -Math.max(0, (front ? 1 : -1) * sn) * 0.09 * s * mv;
+    if (front && pose.kick > 0) { const k = Math.sin(Math.min(1, pose.kick) * Math.PI); fx = (0.15 + 0.4 * k) * s; fy = -0.45 * k * s; }
+    const kx = (hx + fx) / 2 + 0.07 * s * side, ky = (hipY + fy) / 2 - 0.02 * s;
+    const mx = hx + (kx - hx) * 0.55, my = hipY + (ky - hipY) * 0.55;
+    seg(mx, my, kx, ky, 0.07 * s, look.skin);
+    seg(hx, hipY + 0.04 * s, mx, my, 0.085 * s, look.shorts);
+    seg(kx + (fx - kx) * 0.1, ky + (fy - ky) * 0.1 - 0.04 * s, fx, fy - 0.03 * s, 0.064 * s, look.socks);
+    // スパイク
+    c.fillStyle = flat ? (tint || '#151515') : '#141414';
+    c.beginPath(); c.ellipse(fx + 0.06 * s * side, fy - 0.025 * s, (0.07 + 0.06 * side) * s, 0.055 * s, 0, 0, 7); c.fill();
+    if (!flat) { c.fillStyle = 'rgba(255,255,255,0.35)'; c.beginPath(); c.ellipse(fx + 0.04 * s * side, fy - 0.05 * s, 0.05 * s, 0.015 * s, 0, 0, 7); c.fill(); }
+  };
+  const arm = (i) => {
+    const front = i > 0;
+    const sx = i * hw * 0.92 * wf + 0.01 * s, sy = shY + 0.06 * s;
+    let hx2, hy2;
+    if (pose.arms === 'up') { hx2 = i * 0.26 * s + 0.02 * s; hy2 = -2.0 * s; }
+    else if (pose.arms === 'fwd') { hx2 = (0.5 + 0.05 * i) * s; hy2 = -1.58 * s; }
+    else { hx2 = (front ? -sw : sw) * 0.85 * s + i * hw * 1.05 * wf; hy2 = -0.98 * s; }
+    const ex = (sx + hx2) / 2 - 0.03 * s * side, ey = (sy + hy2) / 2;
+    seg(sx, sy, ex, ey, 0.055 * s, look.shirt);
+    seg(ex, ey, hx2, hy2, 0.045 * s, look.skin);
+  };
+  // 奥側の腕・脚
+  arm(-1); leg(-1);
+  // パンツ
+  c.fillStyle = horiz(look.shorts, -hw, hw);
   c.beginPath();
-  if (c.roundRect) c.roundRect(-0.2 * s, shY - 0.04 * s, 0.4 * s, 0.56 * s, 0.07 * s); else c.rect(-0.2 * s, shY - 0.04 * s, 0.4 * s, 0.56 * s);
-  c.fill();
+  c.moveTo(-hw * 0.86, -1.02 * s); c.lineTo(hw * 0.86, -1.02 * s);
+  c.lineTo(hw * 0.95, -0.72 * s); c.lineTo(0.02 * s, -0.76 * s); c.lineTo(-hw * 0.95, -0.72 * s); c.closePath();
+  c.fill(); c.strokeStyle = outline; c.lineWidth = ow; c.stroke();
+  // 胴体（肩が広く、腰が細い）
+  const lean = 0.04 * s * side * mv;
+  c.fillStyle = horiz(look.shirt, -hw, hw);
+  c.beginPath();
+  c.moveTo(-hw * 0.8 + lean, shY - 0.03 * s);
+  c.quadraticCurveTo(lean, shY - 0.09 * s, hw * 0.8 + lean, shY - 0.03 * s);
+  c.quadraticCurveTo(hw * 1.02 + lean, shY, hw * 0.95 + lean * 0.5, shY + 0.14 * s);
+  c.lineTo(hw * 0.8, -0.97 * s); c.lineTo(-hw * 0.8, -0.97 * s);
+  c.lineTo(-hw * 0.95 + lean * 0.5, shY + 0.14 * s);
+  c.quadraticCurveTo(-hw * 1.02 + lean, shY, -hw * 0.8 + lean, shY - 0.03 * s);
+  c.closePath(); c.fill();
+  if (!flat) {
+    // 上からの光・下の影
+    const vg = c.createLinearGradient(0, shY, 0, -0.97 * s);
+    vg.addColorStop(0, 'rgba(255,255,255,0.18)'); vg.addColorStop(0.5, 'rgba(255,255,255,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.28)');
+    c.fillStyle = vg; c.fill();
+  }
+  c.strokeStyle = outline; c.lineWidth = ow; c.stroke();
   if (!tint) {
     c.fillStyle = look.accent;
-    c.fillRect(-0.2 * s, shY + 0.16 * s, 0.4 * s, 0.07 * s);
-    if (s > 26) {
-      c.fillStyle = look.accent; c.font = `900 ${0.2 * s}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.fillText(look.num, 0, shY + 0.36 * s);
+    c.fillRect(-hw * 0.9 + lean * 0.7, shY + 0.17 * s, hw * 1.8, 0.055 * s);
+    if (view === 'front') {
+      c.strokeStyle = look.accent; c.lineWidth = Math.max(1, 0.025 * s);
+      c.beginPath(); c.moveTo(-0.06 * s, shY - 0.05 * s); c.lineTo(0, shY + 0.04 * s); c.lineTo(0.06 * s, shY - 0.05 * s); c.stroke();
+    }
+    if (s > 20) {
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      if (view === 'back') { c.font = `900 ${0.24 * s}px ${FONT}`; c.fillStyle = look.accent; c.fillText(look.num, 0, shY + 0.38 * s); }
+      else if (view === 'front') { c.font = `900 ${0.11 * s}px ${FONT}`; c.fillStyle = look.accent; c.fillText(look.num, -hw * 0.45, shY + 0.1 * s); }
+      else if (s > 30) { c.font = `900 ${0.13 * s}px ${FONT}`; c.fillStyle = look.accent; c.fillText(look.num, lean - 0.03 * s, shY + 0.36 * s); }
     }
   }
-  // 手前の脚（キック時は前に振り上げ）
-  if (pose.kick > 0) {
-    const k = Math.sin(Math.min(1, pose.kick) * Math.PI);
-    leg(0.04 * s, (0.15 + 0.4 * k) * s, -0.45 * k * s, true);
-  } else leg(0.04 * s, sw * s, 0, true);
-  if (armsUp) arm(0.3 * s, -2.0 * s); else if (armsFwd) arm(0.55 * s, -1.55 * s); else arm(sw * 0.9 * s, -0.98 * s);
-  // 頭
-  c.fillStyle = col(look.skin);
-  c.beginPath(); c.arc(0.02 * s, -1.62 * s, 0.135 * s, 0, 7); c.fill();
-  c.fillStyle = col(look.hair);
-  c.beginPath(); c.arc(0.0, -1.66 * s, 0.14 * s, Math.PI * 0.95, Math.PI * 2.15); c.fill();
+  // 手前側の脚・腕
+  leg(1); arm(1);
+  // 首と頭
+  const hx0 = lean + 0.015 * s * side, hy0 = -1.635 * s;
+  seg(hx0 * 0.6, shY - 0.02 * s, hx0, hy0 + 0.08 * s, 0.045 * s, look.skin);
+  const rx = 0.118 * s, ry = 0.135 * s;
+  if (flat) c.fillStyle = tint || look.skin;
+  else {
+    const hg = c.createRadialGradient(hx0 + lx * 0.045 * s, hy0 - 0.05 * s, 0.01 * s, hx0, hy0, ry * 1.1);
+    hg.addColorStop(0, shade(look.skin, 0.3)); hg.addColorStop(0.55, look.skin); hg.addColorStop(1, shade(look.skin, -0.35));
+    c.fillStyle = hg;
+  }
+  c.beginPath(); c.ellipse(hx0, hy0, rx, ry, 0, 0, 7); c.fill();
+  c.strokeStyle = outline; c.lineWidth = ow; c.stroke();
+  // 髪
+  const hair = tint || look.hair;
+  c.fillStyle = flat ? hair : horiz(hair, hx0 - rx, hx0 + rx);
+  c.beginPath();
+  if (view === 'back') c.ellipse(hx0, hy0 - 0.005 * s, rx * 1.04, ry * 1.02, 0, 0, 7);
+  else if (view === 'front') c.ellipse(hx0, hy0 - 0.06 * s, rx * 1.05, ry * 0.75, 0, Math.PI * 0.95, Math.PI * 2.05);
+  else { c.ellipse(hx0 - 0.02 * s, hy0 - 0.03 * s, rx * 1.05, ry * 0.95, 0, Math.PI * 0.55, Math.PI * 1.95); }
+  c.fill();
   // ツンツン髪（超次元っぽさ）
   c.beginPath();
-  c.moveTo(-0.13 * s, -1.68 * s); c.lineTo(-0.2 * s, -1.86 * s); c.lineTo(-0.05 * s, -1.76 * s);
-  c.lineTo(0.0, -1.92 * s); c.lineTo(0.06 * s, -1.76 * s); c.lineTo(0.16 * s, -1.82 * s); c.lineTo(0.13 * s, -1.66 * s);
+  c.moveTo(hx0 - 0.13 * s, hy0 - 0.05 * s); c.lineTo(hx0 - 0.21 * s, hy0 - 0.23 * s); c.lineTo(hx0 - 0.05 * s, hy0 - 0.13 * s);
+  c.lineTo(hx0, hy0 - 0.29 * s); c.lineTo(hx0 + 0.06 * s, hy0 - 0.13 * s); c.lineTo(hx0 + 0.17 * s, hy0 - 0.19 * s); c.lineTo(hx0 + 0.13 * s, hy0 - 0.04 * s);
   c.fill();
+  if (!flat && s > 14) {
+    // 顔
+    c.fillStyle = '#1a1010';
+    if (view === 'front') {
+      c.beginPath(); c.arc(hx0 - 0.042 * s, hy0 + 0.005 * s, 0.017 * s, 0, 7); c.arc(hx0 + 0.042 * s, hy0 + 0.005 * s, 0.017 * s, 0, 7); c.fill();
+    } else if (view === 'side') {
+      c.beginPath(); c.arc(hx0 + 0.07 * s, hy0, 0.016 * s, 0, 7); c.fill();
+      c.fillStyle = shade(look.skin, -0.2);
+      c.beginPath(); c.arc(hx0 - 0.015 * s, hy0 + 0.01 * s, 0.025 * s, 0, 7); c.fill();
+    }
+  }
   c.restore();
 }
 
 function playerPose(p) {
   const sp = Math.hypot(p.vx, p.vy);
-  const pose = { run: p.run, moving: sp > 0.5, flip: p.fx >= 0 ? 1 : -1, side: Math.abs(p.fx), kick: p.kickAnim > 0 ? 1 - p.kickAnim / 0.3 : 0 };
+  const pose = { run: p.run, moving: sp > 0.5, flip: p.fx >= 0 ? 1 : -1, side: Math.abs(p.fx), fy: p.fy, kick: p.kickAnim > 0 ? 1 - p.kickAnim / 0.3 : 0 };
   if (p.state === 'down') { pose.rot = 1.45 * pose.flip; pose.moving = false; }
   else if (p.state === 'slide') { pose.rot = -0.95 * pose.flip; pose.moving = false; pose.kick = 0.5; }
   else if (p.state === 'dive') { pose.rot = (p.diveDir || 1) * 1.25; pose.moving = false; pose.arms = 'up'; pose.flip = 1; }
@@ -302,8 +397,11 @@ function playerPose(p) {
 
 function drawShadow(c, x, y, r) {
   const s = P(x, y, 0); if (!s) return;
-  c.fillStyle = 'rgba(0,0,0,0.32)';
-  c.beginPath(); c.ellipse(s.x, s.y, r * s.k, r * s.k * 0.32, 0, 0, 7); c.fill();
+  const rx = r * s.k * 1.15, ry = r * s.k * 0.38, cx = s.x + rx * 0.18;
+  c.save(); c.translate(cx, s.y); c.scale(1, ry / rx);
+  const g = c.createRadialGradient(0, 0, 0, 0, 0, rx);
+  g.addColorStop(0, 'rgba(0,0,0,0.45)'); g.addColorStop(0.6, 'rgba(0,0,0,0.25)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = g; c.beginPath(); c.arc(0, 0, rx, 0, 7); c.fill(); c.restore();
 }
 
 function drawPlayer(c, p) {
@@ -318,7 +416,7 @@ function drawPlayer(c, p) {
     c.fillStyle = rg; c.fillRect(s.x - s.k * 2, s.y - s.k * 3, s.k * 4, s.k * 4);
     c.globalCompositeOperation = 'source-over';
   }
-  drawFigure(c, s.x, s.y, s.k, lookOf(p), pose);
+  drawFigure(c, s.x, s.y, s.k * 1.2, lookOf(p), pose);
 }
 
 function drawBall(c, b) {
@@ -707,7 +805,7 @@ function drawPassGuide(c) {
 function drawCursor(c) {
   if (G.auto || !G.ctrl || G.phase === 'title') return;
   const p = G.ctrl;
-  const s = P(p.x, p.y, p.z + 2.35); if (!s) return;
+  const s = P(p.x, p.y, p.z + 2.75); if (!s) return;
   const sz = Math.max(6, 0.28 * s.k);
   c.fillStyle = '#ffe14d'; c.strokeStyle = '#000'; c.lineWidth = 1.5;
   const bob = Math.sin(G.t * 8) * 2;
@@ -899,7 +997,7 @@ function drawClash(c, f) {
   c.font = `${Math.round(H0 * 0.08)}px ${TITLE_FONT}`; c.lineWidth = 6; c.strokeStyle = '#000';
   c.strokeText('VS', W0 / 2, H0 * 0.3); c.fillStyle = '#ffe14d'; c.fillText('VS', W0 / 2, H0 * 0.3);
   if (t > 1.55) {
-    const txt = f.win ? '突破！！' : 'ストップ！！';
+    const txt = f.win ? (f.winText || '突破！！') : (f.loseText || 'ストップ！！');
     const sz = Math.round(H0 * 0.15);
     c.font = `${sz}px ${TITLE_FONT}`; c.lineWidth = 10;
     c.strokeText(txt, W0 / 2, H0 * 0.82); c.fillStyle = f.win ? E1.light : E2.light; c.fillText(txt, W0 / 2, H0 * 0.82);
@@ -1014,9 +1112,9 @@ function drawMotion(c, f) {
     }
     c.globalCompositeOperation = 'source-over';
     if (f.partner) {
-      drawFigure(c, W0 * 0.4, gy, s, look, { run: 0, moving: false, flip: 1, arms: 'up' });
-      drawFigure(c, W0 * 0.6, gy, s, look2, { run: 0, moving: false, flip: -1, arms: 'up' });
-    } else drawFigure(c, cx, gy, s, look, { run: 0, moving: false, flip: 1, arms: 'up' });
+      drawFigure(c, W0 * 0.4, gy, s, look, { run: 0, moving: false, flip: 1, side: 0, fy: -1, arms: 'up' });
+      drawFigure(c, W0 * 0.6, gy, s, look2, { run: 0, moving: false, flip: -1, side: 0, fy: -1, arms: 'up' });
+    } else drawFigure(c, cx, gy, s, look, { run: 0, moving: false, flip: 1, side: 0, fy: -1, arms: 'up' });
   }
   c.restore();
 }

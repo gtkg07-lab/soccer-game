@@ -81,6 +81,12 @@ const UI = {
     items.push({ plain: true, label: 'ふつうに止める', ok: true });
     this.buildMenu(title || '必殺シュートが来た！ キーパー技は？', items, cb, cb, 0.03, 3.5);
   },
+  defenseMenu(q, opts, cb) {
+    const T = teamOf(q);
+    const items = opts.map(sk => ({ sk, ok: T.gauge >= sk.cost, why: 'ゲージ不足' }));
+    items.push({ plain: true, label: '使わない', ok: true });
+    this.buildMenu(`必殺ドリブルが来た！ ${q.d.name}のディフェンス技は？`, items, cb, cb, 0.03, 3.5);
+  },
   buildMenu(title, items, onPick, onCancel, scale, timeout) {
     const box = $('skillMenu');
     box.querySelector('.smTitle').textContent = title;
@@ -102,7 +108,7 @@ const UI = {
         e.preventDefault(); e.stopPropagation();
         if (!it.ok) { Sfx.tone(200, 0.1, 'square', 0.05); return; }
         Sfx.menu();
-        const cb = this.cb; this.cb = null;
+        const cb = this.cb; this.cb = null; this.cancelCb = null;
         this.closeMenu();
         if (cb) cb(it.plain ? null : it.sk);
       });
