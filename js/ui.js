@@ -75,11 +75,11 @@ const UI = {
       if (again) useSkill(p, sk); else this.toast('タイミングを逃した！');
     }, null, 0.08, 5);
   },
-  keeperMenu(K, opts, cb) {
+  keeperMenu(K, opts, cb, title) {
     const T = teamOf(K);
     const items = opts.map(sk => ({ sk, ok: T.gauge >= sk.cost, why: 'ゲージ不足' }));
-    items.push({ plain: true, label: 'ふつうにキャッチ', ok: true });
-    this.buildMenu('必殺シュートが来た！ キーパー技は？', items, cb, cb, 0.03, 3.5);
+    items.push({ plain: true, label: 'ふつうに止める', ok: true });
+    this.buildMenu(title || '必殺シュートが来た！ キーパー技は？', items, cb, cb, 0.03, 3.5);
   },
   buildMenu(title, items, onPick, onCancel, scale, timeout) {
     const box = $('skillMenu');

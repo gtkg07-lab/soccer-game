@@ -304,6 +304,24 @@ function planSave(p, gx, ty, tz, Tt, spd) {
   const saved = onTarget ? Math.random() < pr : (dLat < 1.0 && Math.random() < 0.5);
   G.shotPlan = { K, saved, catchIt: saved && dLat < 1.3 && spd < 27 && zAtK < 1.9, y: yAtK, z: zAtK,
     tDive: G.t + Math.max(0, tK - 0.42), dived: false, team: p.team };
+  if (onTarget) keeperVsShot(G.shotPlan);
+}
+// 枠内のシュートが来たら、キーパー技で止められる（自チームはメニューで選ぶ）
+function keeperVsShot(plan) {
+  const K = plan.K, T = teamOf(K);
+  const opts = K.d.skills.map(k => SKILLS[k]).filter(k => k.type === 'keeper');
+  const afford = opts.filter(k => T.gauge >= k.cost);
+  if (!afford.length || K.state === 'down') return;
+  const use = sk => {
+    if (!sk || G.shotPlan !== plan || T.gauge < sk.cost) return;
+    addGauge(T, -sk.cost);
+    plan.saved = true; plan.catchIt = true; plan.ksk = sk;
+    startFreeze({ type: 'cutin', dur: 1.1, p: K, sk, onEnd: () => FX.shield(K.x, K.y, 0, sk.elem, 1.6, 'keeper') });
+    Sfx.cutin();
+  };
+  if (K.team === 0 && !G.auto) { UI.keeperMenu(K, opts, use, 'シュートが来た！ キーパー技は？'); return; }
+  // CPU・AUTO は決まりそうなシュートのときだけ使う
+  if (!plan.saved && Math.random() < (K.team === 1 ? DIFF[G.diff].skill * 0.5 : 0.5)) use(afford[0]);
 }
 
 // ===== 必殺技 =====
@@ -330,6 +348,7 @@ function skillOptions(p) {
       if (hasBall) continue;
       const o = b.owner;
       if (!o || o.team === p.team || dist(o, p) > 8) { ok = false; why = '相手が遠い'; }
+      else if (o.mustPass) { ok = false; why = 'リスタート中'; }
     } else continue;
     res.push({ sk, ok, why });
   }
@@ -351,7 +370,7 @@ function useSkill(p, sk) {
     startFreeze({ type: 'cutin', dur: 0.95, p, sk, onEnd: () => startDash(p, sk) });
   } else if (sk.type === 'tackle') {
     const o = b.owner;
-    if (!o || o.team === p.team || dist(o, p) > 8) return false;
+    if (!o || o.team === p.team || dist(o, p) > 8 || o.mustPass) return false;
     addGauge(T, -sk.cost);
     startFreeze({ type: 'cutin', dur: 0.95, p, sk, onEnd: () => startTackleSkill(p, sk) });
   } else return false;
@@ -501,7 +520,7 @@ function startDash(p, sk) {
 }
 function startTackleSkill(p, sk) {
   const o = G.ball.owner;
-  if (!o || o.team === p.team) return;
+  if (!o || o.team === p.team || o.mustPass) return;
   p.state = 'dash'; p.st = 0.45; p.dashTarget = o; p.dashSk = sk; p.dashHit = [];
   Sfx.whoosh();
 }
@@ -546,7 +565,7 @@ function movePlayers(dt) {
         const sp = 10 * (0.3 + Math.max(0, p.st) / 0.5);
         p.vx = p.dashDx * sp; p.vy = p.dashDy * sp;
         const o = b.owner;
-        if (!p.slideHit && o && o.team !== p.team && dist(p, o) < 1.5 && !(o.gk && o.gkHold > 0)) {
+        if (!p.slideHit && o && o.team !== p.team && dist(p, o) < 1.5 && !o.mustPass && !(o.gk && o.gkHold > 0)) {
           p.slideHit = true;
           if (Math.random() < 0.72) {
             b.owner = null; b.vx = p.dashDx * 8 + rnd(-2, 2); b.vy = p.dashDy * 8 + rnd(-2, 2); b.vz = 1.5;
@@ -566,7 +585,7 @@ function movePlayers(dt) {
           const dx = (o.x - p.x) / (d || 1), dy = (o.y - p.y) / (d || 1);
           p.vx = dx * 22; p.vy = dy * 22; p.fx = dx; p.fy = dy;
           if (d < 1.1) {
-            if (b.owner === o) {
+            if (b.owner === o && !o.mustPass) {
               o.state = 'down'; o.st = 1.6; o.vx = dx * 6; o.vy = dy * 6;
               giveBall(p);
               FX.burst(o.x, o.y, 1, p.dashSk.fx, 50); G.shake = 0.5;
@@ -688,7 +707,11 @@ function updateBall(dt) {
       G.shotPlan = null;
       if (plan.saved && K.state !== 'down') {
         K.y = clamp(b.y - Math.sign(b.y - K.y) * 0.3, -4, 4);
-        if (plan.catchIt) {
+        if (plan.ksk) {
+          giveBall(K); K.gkHold = 1.4;
+          FX.burst(b.x, b.y, b.z, plan.ksk.fx, 40); G.shake = 0.4;
+          banner('ストップ！', `${K.d.name}の${plan.ksk.name}`, ELEM[plan.ksk.elem].light, 1.3);
+        } else if (plan.catchIt) {
           giveBall(K); K.gkHold = 1.4;
           FX.text(K.x, K.y, 2.6, 'キャッチ！', '#ffffff');
         } else {
@@ -730,7 +753,7 @@ function checkPossession() {
 }
 function checkTackles(dt) {
   const b = G.ball, o = b.owner;
-  if (!o || o.state === 'dash' || G.protectT > 0 || (o.gk && o.gkHold > 0)) return;
+  if (!o || o.state === 'dash' || o.mustPass || G.protectT > 0 || (o.gk && o.gkHold > 0)) return;
   for (const p of G.teams[1 - o.team].players) {
     if (p.state !== 'run' || p.gk) continue;
     if (dist(p, o) > 1.1) continue;
@@ -1003,8 +1026,14 @@ function aiOutfield(p, dt) {
     let presser = first, cover = second;
     if (manual) { presser = null; cover = first === G.ctrl ? second : first; }
     if (p === presser) {
-      moveTo(p, o.x + o.vx * 0.3 - s * 0.6, o.y + o.vy * 0.3, 1.25);
       const d = dist(p, o);
+      if (o.mustPass) {
+        // スローインなどの間は少し離れて待つ
+        const vx = -s * L - o.x, vy = -o.y, l = Math.hypot(vx, vy) || 1;
+        moveTo(p, o.x + vx / l * 4, o.y + vy / l * 4, 1.0);
+        return;
+      }
+      moveTo(p, o.x + o.vx * 0.3 - s * 0.6, o.y + o.vy * 0.3, 1.25);
       if (G.protectT <= 0 && !(o.gk && o.gkHold > 0)) {
         const ts = p.d.skills.map(k => SKILLS[k]).find(k => k.type === 'tackle' && T.gauge >= k.cost + 20);
         const pr = p.team === 1 ? DIFF[G.diff].skill : 0.7;
